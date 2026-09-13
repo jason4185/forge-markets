@@ -5,6 +5,8 @@ _1-hour commodity dominance markets on GenLayer._
 FORGE is a permissionless prediction market where users back the commodity
 with the highest percentage return over an exact 1-hour UTC window.
 
+**Live Demo:** [forge-markets.vercel.app](https://forge-markets.vercel.app/)
+
 ## How it works
 
 Choose a category, choose an exact future UTC-hour market, and stake GEN on one
@@ -119,7 +121,7 @@ under the same rules for every caller.
 | --- | --- |
 | Network | GenLayer StudioNext |
 | Chain ID | `61997` |
-| Contract | `0xc93d27132e62467183bB22DF335368C378379C09` |
+| Contract | [`0xc93d27132e62467183bB22DF335368C378379C09`](https://explorer-studio-dev.genlayer.com/address/0xc93d27132e62467183bB22DF335368C378379C09) |
 | RPC | `https://studio-dev.genlayer.com/api` |
 
 ## Contract interface
