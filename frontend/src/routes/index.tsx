@@ -6,14 +6,12 @@ import { MarketCard } from "@/components/forge/MarketCard";
 import { mapForgeError } from "@/lib/forge/errors";
 import { formatGen } from "@/lib/forge/format";
 import {
-  useForgeCategories,
-  useForgeMarketCount,
   useForgeMarkets,
   useForgeMyPositions,
   useForgeWalletAddress,
   useNow,
 } from "@/lib/forge/useForge";
-import type { Category, MarketState } from "@/lib/forge/constants";
+import { CATEGORIES, type Category, type MarketState } from "@/lib/forge/constants";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -54,8 +52,6 @@ const STATUS_LABEL: Record<string, string> = {
 export function MarketsPage() {
   const now = useNow();
   const walletAddress = useForgeWalletAddress();
-  const categories = useForgeCategories();
-  const count = useForgeMarketCount();
   const markets = useForgeMarkets(now);
   const positions = useForgeMyPositions(now, walletAddress, 0, 50);
   const [cat, setCat] = useState<"ALL" | Category>("ALL");
@@ -81,8 +77,9 @@ export function MarketsPage() {
   );
   const liquidity = loadedMarkets.reduce((total, market) => total + market.totalPool, 0n);
   const openNow = loadedMarkets.filter((market) => market.bettingOpen).length;
-  const categoryOptions = categories.data ?? [];
+  const categoryOptions = CATEGORIES;
   const marketError = mapForgeError(markets.error, "READ_MARKETS");
+  const marketDataReady = !markets.isLoading && !markets.isError && markets.data !== undefined;
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-10 lg:px-6">
@@ -99,21 +96,17 @@ export function MarketsPage() {
         </div>
         <div className="grid w-full grid-cols-2 gap-3 lg:w-auto">
           <div className="rounded-2xl border border-border bg-panel px-5 py-4">
-            <p className="text-xs text-muted-foreground">
-              Total Liquidity
-              {!markets.isError &&
-              count.data !== undefined &&
-              count.data > BigInt(markets.data?.length ?? 0)
-                ? " · loaded page"
-                : ""}
-            </p>
+            <p className="text-xs text-muted-foreground">Total Liquidity</p>
             <p className="num mt-1 text-2xl font-semibold text-foreground">
-              {formatGen(liquidity)} <span className="text-sm text-muted-foreground">GEN</span>
+              {marketDataReady ? formatGen(liquidity) : "—"}{" "}
+              {marketDataReady && <span className="text-sm text-muted-foreground">GEN</span>}
             </p>
           </div>
           <div className="rounded-2xl border border-border bg-panel px-5 py-4">
             <p className="text-xs text-muted-foreground">Open Now</p>
-            <p className="num mt-1 text-2xl font-semibold text-success">{openNow}</p>
+            <p className="num mt-1 text-2xl font-semibold text-success">
+              {marketDataReady ? openNow : "—"}
+            </p>
           </div>
         </div>
       </div>
@@ -188,14 +181,6 @@ export function MarketsPage() {
           No real Forge markets match these filters.
         </p>
       )}
-      {!markets.isError &&
-        markets.data &&
-        count.data !== undefined &&
-        count.data > BigInt(markets.data.length) && (
-          <p className="mt-5 text-center text-xs text-muted-foreground">
-            Showing the newest {markets.data.length} of {count.data.toString()} indexed markets.
-          </p>
-        )}
     </div>
   );
 }

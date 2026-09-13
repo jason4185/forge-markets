@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useForgeMyActivity, useForgeMyPositions } from "./useForge";
 import { hasAcceptedClaimAction, useClaimActionLocksVersion } from "./claimActionState";
 import { formatAsset, formatGen } from "./format";
@@ -7,6 +7,8 @@ import type { ForgeNotification } from "./types";
 export function useForgeNotifications(wallet?: string) {
   const positions = useForgeMyPositions(Date.now(), wallet, 0, 50);
   const activity = useForgeMyActivity(wallet, 0, 50);
+  const { refetch: refetchPositions } = positions;
+  const { refetch: refetchActivity } = activity;
   useClaimActionLocksVersion();
 
   const items = useMemo<ForgeNotification[]>(() => {
@@ -100,10 +102,14 @@ export function useForgeNotifications(wallet?: string) {
   const actionableCount = items.filter(
     (item) => item.action === "claim" || item.action === "refund",
   ).length;
+  const refresh = useCallback(async () => {
+    await Promise.allSettled([refetchActivity(), refetchPositions()]);
+  }, [refetchActivity, refetchPositions]);
   return {
     items,
     actionableCount,
     isLoading: Boolean(wallet) && (activity.isLoading || positions.isLoading),
     isError: Boolean(wallet) && (activity.isError || positions.isError),
+    refresh,
   };
 }

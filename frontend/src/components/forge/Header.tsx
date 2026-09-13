@@ -134,7 +134,11 @@ export function Header() {
                 : "Switch to StudioNext"
               : "GenLayer StudioNext"}
           </button>
-          <DropdownMenu>
+          <DropdownMenu
+            onOpenChange={(open) => {
+              if (open && address) void notifications.refresh();
+            }}
+          >
             <DropdownMenuTrigger asChild>
               <button
                 className="relative rounded-xl border border-border bg-panel p-2 text-muted-foreground transition-colors hover:text-foreground"

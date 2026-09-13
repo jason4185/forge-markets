@@ -14,7 +14,7 @@ import { fetchBinancePerformance } from "./binance";
 import type { Category, Source } from "./constants";
 import type { MarketView } from "./types";
 
-export function useNow(intervalMs = 1000) {
+export function useNow(intervalMs = 15_000) {
   const [now, setNow] = React.useState(0);
   React.useEffect(() => {
     setNow(Date.now());
@@ -122,14 +122,17 @@ const queryOptions = {
   retry: shouldRetryRead,
   retryDelay: queryRetryDelay,
   refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
 } as const;
 const walletActionabilityVariant = TransactionHashVariant.LATEST_NONFINAL;
+const PUBLIC_READ_STALE_TIME_MS = 15_000;
+const STATIC_READ_STALE_TIME_MS = 300_000;
 
 export function useForgeConfig() {
   return useQuery({
     queryKey: ["forge", "config"],
     queryFn: () => contractAdapter.getConfig(),
-    staleTime: 300_000,
+    staleTime: STATIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -137,7 +140,7 @@ export function useForgeCategories() {
   return useQuery({
     queryKey: ["forge", "categories"],
     queryFn: () => contractAdapter.categories(),
-    staleTime: 300_000,
+    staleTime: STATIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -146,7 +149,7 @@ export function useForgeCategoryAssets(category?: Category) {
     queryKey: ["forge", "category-assets", category],
     queryFn: () => contractAdapter.categoryAssets(category!),
     enabled: Boolean(category),
-    staleTime: 300_000,
+    staleTime: STATIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -154,25 +157,25 @@ export function useForgeMarketCount() {
   return useQuery({
     queryKey: ["forge", "market-count"],
     queryFn: () => contractAdapter.getMarketCount(),
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
 export function useForgeMarkets(nowMs: number, offset = 0, limit = MAX_PAGE_SIZE) {
   return useQuery({
     queryKey: ["forge", "markets", offset, limit],
-    queryFn: () => contractAdapter.getMarkets(nowMs, offset, limit),
+    queryFn: () => contractAdapter.getMarkets(Date.now(), offset, limit),
     enabled: nowMs > 0,
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
 export function useForgeOpenMarkets(nowMs: number, offset = 0, limit = MAX_PAGE_SIZE) {
   return useQuery({
     queryKey: ["forge", "open-markets", offset, limit],
-    queryFn: () => contractAdapter.getOpenMarkets(nowMs, offset, limit),
+    queryFn: () => contractAdapter.getOpenMarkets(Date.now(), offset, limit),
     enabled: nowMs > 0,
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -182,25 +185,28 @@ export function useForgeBinancePerformance(market: MarketView | undefined, nowMs
   const active = Boolean(
     market && market.contractState === "OPEN" && nowMs >= market.startMs && nowMs < market.endMs,
   );
-  const endTime = market
-    ? nowMs >= market.endMs
-      ? market.endMs
-      : Math.min(
-          market.endMs,
-          Math.max(market.startMs + 60_000, Math.floor(nowMs / 15_000) * 15_000),
-        )
-    : 0;
   return useQuery({
     queryKey: [
       "forge",
       "binance-performance",
       market?.id ?? "none",
       ...(market?.symbolsBySource.BINANCE ?? []),
-      endTime,
+      market?.startMs ?? 0,
+      market?.endMs ?? 0,
     ],
-    queryFn: () => fetchBinancePerformance(market!, endTime),
-    enabled: Boolean(market && started && endTime > market.startMs),
-    staleTime: active ? 10_000 : 300_000,
+    queryFn: () => {
+      const currentNow = Date.now();
+      const endTime =
+        currentNow >= market!.endMs
+          ? market!.endMs
+          : Math.min(
+              market!.endMs,
+              Math.max(market!.startMs + 60_000, Math.floor(currentNow / 15_000) * 15_000),
+            );
+      return fetchBinancePerformance(market!, endTime);
+    },
+    enabled: Boolean(market && started),
+    staleTime: active ? 10_000 : STATIC_READ_STALE_TIME_MS,
     refetchInterval: active ? 15_000 : false,
     refetchIntervalInBackground: false,
     ...queryOptions,
@@ -214,9 +220,9 @@ export function useForgeMarket(
 ) {
   return useQuery({
     queryKey: ["forge", "market", marketId, transactionHashVariant],
-    queryFn: () => contractAdapter.getMarket(marketId, nowMs, transactionHashVariant),
+    queryFn: () => contractAdapter.getMarket(marketId, Date.now(), transactionHashVariant),
     enabled: Boolean(marketId) && nowMs > 0,
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     placeholderData: (previousData) => previousData,
     ...queryOptions,
   });
@@ -226,7 +232,7 @@ export function useForgePosition(marketId: string, address?: string) {
     queryKey: ["forge", "my-position", marketId, address ?? "disconnected"],
     queryFn: () => contractAdapter.getMyPosition(marketId, address!, walletActionabilityVariant),
     enabled: Boolean(marketId && address),
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -235,7 +241,7 @@ export function useForgeBettingState(marketId: string, address?: string) {
     queryKey: ["forge", "betting-state", marketId, address ?? "disconnected"],
     queryFn: () => contractAdapter.getBettingState(marketId, address!, walletActionabilityVariant),
     enabled: Boolean(marketId && address),
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -264,7 +270,7 @@ export function useForgeSourceEvidence(
         market,
       ),
     enabled: Boolean(marketId && source) && enabled && nowMs > 0,
-    staleTime: 300_000,
+    staleTime: STATIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -273,7 +279,7 @@ export function useForgeMyMarketCount(address?: string) {
     queryKey: ["forge", "my-market-count", address ?? "disconnected"],
     queryFn: () => contractAdapter.getMyMarketCount(address!, walletActionabilityVariant),
     enabled: Boolean(address),
-    refetchInterval: 30_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -286,9 +292,15 @@ export function useForgeMyPositions(
   return useQuery({
     queryKey: ["forge", "my-positions", address ?? "disconnected", offset, limit],
     queryFn: () =>
-      contractAdapter.getMyPositions(nowMs, address!, offset, limit, walletActionabilityVariant),
+      contractAdapter.getMyPositions(
+        Date.now(),
+        address!,
+        offset,
+        limit,
+        walletActionabilityVariant,
+      ),
     enabled: Boolean(address) && nowMs > 0,
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -302,14 +314,14 @@ export function useForgeMyClaimable(
     queryKey: ["forge", "my-claimable", address ?? "disconnected", offset, limit],
     queryFn: () =>
       contractAdapter.getMyClaimableMarkets(
-        nowMs,
+        Date.now(),
         address!,
         offset,
         limit,
         walletActionabilityVariant,
       ),
     enabled: Boolean(address) && nowMs > 0,
-    refetchInterval: 20_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -319,7 +331,7 @@ export function useForgeMyActivity(address?: string, offset = 0, limit = MAX_PAG
     queryFn: () =>
       contractAdapter.getMyActivity(address!, offset, limit, walletActionabilityVariant),
     enabled: Boolean(address),
-    refetchInterval: 30_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
@@ -328,7 +340,7 @@ export function useForgeMyActivityCount(address?: string) {
     queryKey: ["forge", "my-activity-count", address ?? "disconnected"],
     queryFn: () => contractAdapter.getMyActivityCount(address!, walletActionabilityVariant),
     enabled: Boolean(address),
-    refetchInterval: 30_000,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });
 }
