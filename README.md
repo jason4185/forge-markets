@@ -50,24 +50,42 @@ percentage return during this exact 1-hour UTC window?
 
 ## Settlement
 
-Forge uses Binance, Gate, and Bitget as independent sources. Each source uses
-its own open and close values for the same 1-hour candle and calculates:
+Forge uses Binance USD-M Futures, Gate, and Bitget as independent sources. Each
+source uses its own open and close values for the same 1-hour candle and calculates:
 
 ```text
 return = (close - open) / open
 ```
 
 Each source then selects the commodity with the highest numerical return. The
-contract does not average prices or returns across exchanges; the three
-exchanges act as independent votes.
+contract does not average prices or returns across exchanges. It treats each
+source result as an independent vote; the exchanges provide evidence, while
+Forge and GenLayer consensus determine whether settlement is proven.
 
-A source contributes no vote when its evidence is unavailable or fails the
-contract's validation rules, or when its three returns produce an exact tie.
+A source result is classified as `VALID`, `TIE`, `UNAVAILABLE`, or `INVALID`.
+`VALID` casts its winner vote; `TIE`, `UNAVAILABLE`, and `INVALID` cast no vote.
+`UNAVAILABLE` is a transient result that can be retried, while `INVALID` means
+the source responded but its evidence failed deterministic validation.
 Settlement requires `2 of 3` matching `VALID` source winners.
+Each source calculation allows up to three attempts, but only `UNAVAILABLE`
+results are retried; `TIE` and `INVALID` results stop that source calculation.
+
+Forge evaluates the complete source proposal through GenLayer consensus. The
+leader collects all three source results, and validators independently refetch
+and validate all three. A positive result must prove the same financial winner
+and include at least two matching source/winner witnesses in both executions;
+a transient difference in the third source does not invalidate those common
+witnesses.
+
+Returns are compared by highest percentage return, so all-negative returns are
+valid and the least-negative commodity can win. An exact highest-return tie
+produces `TIE` and casts no winner vote.
 
 The market lasts one hour. Settlement becomes available after the performance
 hour ends and can be retried for a further 30 minutes. If no 2-of-3 result is
-reached before that retry deadline, the market becomes `INCONCLUSIVE`.
+reached during that retry window, a `settle_market` call at or after the
+deadline changes the market to `INCONCLUSIVE` without requiring another source
+fetch.
 
 ```mermaid
 flowchart LR
@@ -110,16 +128,17 @@ the inconclusive state.
 
 ## Why GenLayer?
 
-Forge uses GenLayer so settlement can evaluate external exchange evidence and
-reach validator consensus around the resulting market outcome. The contract
-then records the market result and controls the winner, payout, or refund path
-under the same rules for every caller.
+Forge uses GenLayer so a leader and validators independently execute the
+nondeterministic source-evidence proposal. Validators refetch the three
+exchange sources and verify the financial witness before the contract records
+the market result and controls the winner, payout, or refund path under the
+same rules for every caller.
 
 ## Deployment
 
 | Field | Value |
 | --- | --- |
-| Network | GenLayer StudioNext |
+| Network | GenLayer StudioNext / studio-dev |
 | Chain ID | `61997` |
 | Contract | [`0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15`](https://explorer-studio-dev.genlayer.com/address/0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15) |
 | RPC | `https://studio-dev.genlayer.com/api` |
@@ -178,7 +197,8 @@ through `genlayer-js`. Current user-facing areas are:
 
 Wallet-specific reads and writes use the connected injected browser wallet.
 The market detail page also shows source evidence and pool composition. Its live
-performance area is informational only and is not connected to settlement.
+performance chart uses the contract-provided Binance symbols and public 1-minute
+market data; it is informational only and is not connected to settlement.
 
 ## Run locally
 
@@ -219,4 +239,4 @@ forge/
 - Forge intelligent contract deployed on GenLayer StudioNext.
 - Frontend pages and contract-backed reads and writes are implemented.
 - Wallet actions use the deployed contract through an injected wallet.
-- Live performance display data is not connected yet; it does not determine settlement.
+- Live performance chart data is informational only; settlement uses the contract's independent Binance, Gate, and Bitget evidence.
