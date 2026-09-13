@@ -179,6 +179,7 @@ function MarketDetail() {
         </div>
         <div className="lg:sticky lg:top-24 lg:self-start">
           <ActionPanel
+            key={`${market.id}:${address?.toLowerCase() ?? "disconnected"}`}
             market={market}
             position={position}
             bettingState={bettingState.data}
@@ -186,7 +187,6 @@ function MarketDetail() {
               address &&
               (positionQuery.isError || (positionQuery.isLoading && !positionQuery.data)),
             )}
-            positionError={positionQuery.error}
           />
         </div>
       </div>
@@ -579,13 +579,11 @@ function ActionPanel({
   position,
   bettingState,
   positionUnavailable,
-  positionError,
 }: {
   market: NonNullable<ReturnType<typeof useForgeMarket>["data"]>;
   position: import("@/lib/forge/types").PositionView | undefined;
   bettingState: import("@/lib/forge/types").BettingState | undefined;
   positionUnavailable?: boolean;
-  positionError?: unknown;
 }) {
   const { address, chainId, isConnected } = useAccount();
   const { connect } = useConnect();
@@ -594,7 +592,7 @@ function ActionPanel({
   const refresh = useRefreshForge();
   const claimAction = useClaimActionState(address, market.id, "claim");
   const refundAction = useClaimActionState(address, market.id, "refund");
-  const [pick, setPick] = useState<Asset>(position?.selectedAsset ?? market.assets[0]!);
+  const [pick, setPick] = useState<Asset | null>(position?.selectedAsset ?? null);
   const [amount, setAmount] = useState("1");
   const wrongNetwork = isConnected && chainId !== FORGE_CHAIN_ID;
   const settlementActionAvailable =
@@ -614,12 +612,19 @@ function ActionPanel({
     }
   };
   const lockedSide = position?.hasPosition ? position.selectedAsset : null;
-  const remaining = position ? MAX_BET_WEI - position.totalStake : MAX_BET_WEI;
+  const positionSafetyPending = Boolean(address && (!position || positionUnavailable));
+  const remaining = position ? MAX_BET_WEI - position.totalStake : 0n;
   useEffect(() => {
-    if (position?.selectedAsset) setPick(position.selectedAsset);
-  }, [position?.selectedAsset]);
+    if (!position) {
+      setPick(null);
+      return;
+    }
+    setPick(position.selectedAsset ?? market.assets[0] ?? null);
+  }, [market.assets, position]);
   const runWrite = async (kind: "bet" | "settle" | "claim" | "refund") => {
+    const selectedPick = pick;
     if (!address || tx.locked) return;
+    if (kind === "bet" && (positionSafetyPending || !selectedPick)) return;
     if (kind === "settle" && import.meta.env.DEV)
       console.debug("[FORGE SETTLE CLICK]", { marketId: market.id });
     if (kind === "settle" && import.meta.env.DEV)
@@ -682,6 +687,7 @@ function ActionPanel({
     let result;
     let betValue = 0n;
     if (kind === "bet") {
+      if (!selectedPick) return;
       const value = parseGen(amount);
       if (!value || value < MIN_BET_WEI) {
         tx.fail(mapForgeError(new Error("Minimum bet is 1 GEN."), "PLACE_BET").message);
@@ -694,7 +700,7 @@ function ActionPanel({
         return;
       }
       betValue = value;
-      result = await contractAdapter.placeBet(market.id, pick, value, address, tx.update);
+      result = await contractAdapter.placeBet(market.id, selectedPick, value, address, tx.update);
     } else if (kind === "settle")
       result = await contractAdapter.settleMarket(market.id, address, tx.update);
     else if (kind === "claim") result = await contractAdapter.claim(market.id, address, tx.update);
@@ -850,19 +856,6 @@ function ActionPanel({
         <TransactionDialog state={tx.state} busy={tx.busy} onClose={tx.close} />
       </>
     );
-  if (positionUnavailable)
-    return (
-      <>
-        <aside className="rounded-2xl border border-border bg-panel p-5">
-          <h2 className="text-sm font-semibold text-foreground">Couldn’t load your position</h2>
-          {networkNotice}
-          <p className="mt-2 text-xs text-muted-foreground">
-            {mapForgeError(positionError, "READ_PORTFOLIO").message}
-          </p>
-        </aside>
-        <TransactionDialog state={tx.state} busy={tx.busy} onClose={tx.close} />
-      </>
-    );
   if (!address)
     return (
       <aside className="rounded-2xl border border-border bg-panel p-5">
@@ -905,6 +898,13 @@ function ActionPanel({
               </button>
             ))}
           </div>
+          {positionSafetyPending && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              {positionUnavailable
+                ? "Couldn’t verify your wallet position. Try again shortly."
+                : "Checking wallet position…"}
+            </p>
+          )}
           <label className="mt-4 block text-xs text-muted-foreground">Amount (GEN)</label>
           <input
             value={amount}
@@ -942,7 +942,7 @@ function ActionPanel({
           </ul>
           <Button
             className="mt-4 w-full rounded-xl"
-            disabled={tx.locked || remaining < MIN_BET_WEI}
+            disabled={tx.locked || positionSafetyPending || !pick || remaining < MIN_BET_WEI}
             onClick={() => runWrite("bet")}
           >
             {tx.locked ? "Transaction pending…" : lockedSide ? "Top up position" : "Place position"}

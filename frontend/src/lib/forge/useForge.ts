@@ -33,7 +33,10 @@ export function useForgeWalletAddress() {
     const accountChanged =
       previous.current && previous.current.toLowerCase() !== address?.toLowerCase();
     const chainChanged = previousChain.current !== undefined && previousChain.current !== chainId;
-    if (accountChanged || chainChanged) {
+    if (accountChanged && previous.current) {
+      clearWalletQueriesForAddress(queryClient, previous.current);
+    }
+    if (chainChanged) {
       clearWalletQueries(queryClient, true);
     }
     previous.current = address;
@@ -108,6 +111,10 @@ const walletQueryKeys: readonly (readonly unknown[])[] = [
   ["forge", "betting-state"],
 ];
 
+function walletQueryAddress(address?: string) {
+  return address?.toLowerCase() ?? "disconnected";
+}
+
 function clearWalletQueries(queryClient: ReturnType<typeof useQueryClient>, remove: boolean) {
   if (remove)
     walletQueryKeys.forEach((key) => {
@@ -116,6 +123,21 @@ function clearWalletQueries(queryClient: ReturnType<typeof useQueryClient>, remo
   void Promise.allSettled(
     walletQueryKeys.map((key) => queryClient.invalidateQueries({ queryKey: key })),
   );
+}
+
+function clearWalletQueriesForAddress(
+  queryClient: ReturnType<typeof useQueryClient>,
+  address: string,
+) {
+  const normalizedAddress = address.toLowerCase();
+  void queryClient.removeQueries({
+    predicate: (query) => {
+      const name = query.queryKey[1];
+      if (!walletQueryKeys.some((key) => key[1] === name)) return false;
+      const addressIndex = name === "my-position" || name === "betting-state" ? 3 : 2;
+      return query.queryKey[addressIndex] === normalizedAddress;
+    },
+  });
 }
 
 const queryOptions = {
@@ -229,7 +251,7 @@ export function useForgeMarket(
 }
 export function useForgePosition(marketId: string, address?: string) {
   return useQuery({
-    queryKey: ["forge", "my-position", marketId, address ?? "disconnected"],
+    queryKey: ["forge", "my-position", marketId, walletQueryAddress(address)],
     queryFn: () => contractAdapter.getMyPosition(marketId, address!, walletActionabilityVariant),
     enabled: Boolean(marketId && address),
     staleTime: PUBLIC_READ_STALE_TIME_MS,
@@ -238,7 +260,7 @@ export function useForgePosition(marketId: string, address?: string) {
 }
 export function useForgeBettingState(marketId: string, address?: string) {
   return useQuery({
-    queryKey: ["forge", "betting-state", marketId, address ?? "disconnected"],
+    queryKey: ["forge", "betting-state", marketId, walletQueryAddress(address)],
     queryFn: () => contractAdapter.getBettingState(marketId, address!, walletActionabilityVariant),
     enabled: Boolean(marketId && address),
     staleTime: PUBLIC_READ_STALE_TIME_MS,
@@ -276,7 +298,7 @@ export function useForgeSourceEvidence(
 }
 export function useForgeMyMarketCount(address?: string) {
   return useQuery({
-    queryKey: ["forge", "my-market-count", address ?? "disconnected"],
+    queryKey: ["forge", "my-market-count", walletQueryAddress(address)],
     queryFn: () => contractAdapter.getMyMarketCount(address!, walletActionabilityVariant),
     enabled: Boolean(address),
     staleTime: PUBLIC_READ_STALE_TIME_MS,
@@ -290,7 +312,7 @@ export function useForgeMyPositions(
   limit = MAX_PAGE_SIZE,
 ) {
   return useQuery({
-    queryKey: ["forge", "my-positions", address ?? "disconnected", offset, limit],
+    queryKey: ["forge", "my-positions", walletQueryAddress(address), offset, limit],
     queryFn: () =>
       contractAdapter.getMyPositions(
         Date.now(),
@@ -311,7 +333,7 @@ export function useForgeMyClaimable(
   limit = MAX_PAGE_SIZE,
 ) {
   return useQuery({
-    queryKey: ["forge", "my-claimable", address ?? "disconnected", offset, limit],
+    queryKey: ["forge", "my-claimable", walletQueryAddress(address), offset, limit],
     queryFn: () =>
       contractAdapter.getMyClaimableMarkets(
         Date.now(),
@@ -327,7 +349,7 @@ export function useForgeMyClaimable(
 }
 export function useForgeMyActivity(address?: string, offset = 0, limit = MAX_PAGE_SIZE) {
   return useQuery({
-    queryKey: ["forge", "my-activity", address ?? "disconnected", offset, limit],
+    queryKey: ["forge", "my-activity", walletQueryAddress(address), offset, limit],
     queryFn: () =>
       contractAdapter.getMyActivity(address!, offset, limit, walletActionabilityVariant),
     enabled: Boolean(address),
@@ -337,7 +359,7 @@ export function useForgeMyActivity(address?: string, offset = 0, limit = MAX_PAG
 }
 export function useForgeMyActivityCount(address?: string) {
   return useQuery({
-    queryKey: ["forge", "my-activity-count", address ?? "disconnected"],
+    queryKey: ["forge", "my-activity-count", walletQueryAddress(address)],
     queryFn: () => contractAdapter.getMyActivityCount(address!, walletActionabilityVariant),
     enabled: Boolean(address),
     staleTime: PUBLIC_READ_STALE_TIME_MS,

@@ -9,7 +9,7 @@ import {
 } from "./constants";
 
 export const forgeInjectedConnector = injected({ shimDisconnect: false });
-export const wagmiReconnectOnMount = false;
+export const wagmiReconnectOnMount = true;
 
 export const wagmiConfig = createConfig({
   chains: [forgeChain],
@@ -18,7 +18,6 @@ export const wagmiConfig = createConfig({
     [forgeChain.id]: http(FORGE_RPC_URL),
   },
   multiInjectedProviderDiscovery: false,
-  storage: null,
   ssr: false,
 });
 
