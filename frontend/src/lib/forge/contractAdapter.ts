@@ -132,20 +132,25 @@ function providerType(provider: unknown): string {
   return "EIP-1193";
 }
 
-function debugProvider(provider: EIP1193Provider): EIP1193Provider {
+function debugProvider(provider: EIP1193Provider, functionName: string): EIP1193Provider {
   return {
     request: async (request) => {
       if (import.meta.env.DEV && request.method === "eth_sendTransaction") {
         const transaction = Array.isArray(request.params) ? request.params[0] : undefined;
         const data = isMap(transaction) ? transaction : {};
-        debugForgeTransaction("[FORGE WRITE 6 PROVIDER_REQUEST]", {
-          method: request.method,
-          from: data["from"] ?? "not exposed",
-          chainId: data["chainId"] ?? FORGE_CHAIN_ID,
-          to: data["to"] ?? "not exposed",
-          data: data["data"] ?? "not exposed",
-          value: data["value"] ?? "not exposed",
-        });
+        debugForgeTransaction(
+          functionName === "settle_market"
+            ? "[FORGE SETTLE WALLET REQUEST]"
+            : "[FORGE WRITE 6 PROVIDER_REQUEST]",
+          {
+            method: request.method,
+            from: data["from"] ?? "not exposed",
+            chainId: data["chainId"] ?? FORGE_CHAIN_ID,
+            to: data["to"] ?? "not exposed",
+            data: data["data"] ?? "not exposed",
+            value: data["value"] ?? "not exposed",
+          },
+        );
       }
       return provider.request(request as never);
     },
@@ -160,6 +165,24 @@ type ForgeWriteCall = {
   value: bigint;
 };
 type ForgeFeeEstimate = Awaited<ReturnType<ForgeWriteClient["estimateTransactionFeesForWrite"]>>;
+
+function isTransientFeeError(error: unknown): boolean {
+  const details = debugError(error);
+  const code = details["code"];
+  const text = Object.values(details)
+    .filter((value) => typeof value === "string" || typeof value === "number")
+    .join(" ")
+    .toLowerCase();
+  return (
+    code === 429 ||
+    code === 502 ||
+    code === 503 ||
+    code === 504 ||
+    /\b429\b|\b502\b|\b503\b|\b504\b|rate limit|too many requests|bad gateway|failed to fetch|network|timeout|temporar/.test(
+      text,
+    )
+  );
+}
 
 function exposedReceiptField(receipt: RawMap, names: string[]): string | number {
   for (const name of names) {
@@ -706,6 +729,13 @@ export async function waitForAcceptedExecution({
           destination: exposedReceiptField(value, ["to", "destination", "contract", "recipient"]),
           receiptMethod: exposedReceiptField(value, ["method", "functionName", "function_name"]),
         });
+        if (method === "settle_market")
+          debugForgeTransaction("[FORGE SETTLE DECISION]", {
+            hash,
+            attempt: attempt + 1,
+            status: status ?? "UNKNOWN",
+            executionResult: execution ?? "UNKNOWN",
+          });
         lastStatus = status ?? lastStatus;
         if (execution === ExecutionResult.FINISHED_WITH_ERROR)
           throw new Error("FINISHED_WITH_ERROR");
@@ -824,7 +854,7 @@ async function prepareForgeWrite(
   const client = createClient({
     chain: forgeChain as never,
     account: account as Address,
-    provider: debugProvider(injectedProvider as EIP1193Provider),
+    provider: debugProvider(injectedProvider as EIP1193Provider, functionName),
   });
   // The client is already constructed with the official studioDevnet chain,
   // and the provider chain was checked above. The v2 RC's connect() helper
@@ -842,30 +872,56 @@ async function prepareForgeWrite(
     sdkConnect: "skipped; official chain configured and provider chain verified",
     providerType: providerType(injectedProvider),
   });
-  debugForgeTransaction("[FORGE WRITE 3 FEE_ESTIMATE_START]", {
-    method: functionName,
-    account,
-  });
-  let feeEstimate: ForgeFeeEstimate;
-  try {
-    feeEstimate = await client.estimateTransactionFeesForWrite(call);
-  } catch (error) {
-    debugForgeTransaction("[FORGE WRITE 4 FEE_ESTIMATE_FAILED]", {
+  debugForgeTransaction(
+    functionName === "settle_market"
+      ? "[FORGE SETTLE FEE START]"
+      : "[FORGE WRITE 3 FEE_ESTIMATE_START]",
+    {
       method: functionName,
       account,
-      contract: FORGE_CONTRACT_ADDRESS,
-      error: debugError(error),
-    });
-    throw new Error(`FEE_ESTIMATE_FAILED: ${errorMessage(error)}`);
+    },
+  );
+  let feeEstimate: ForgeFeeEstimate | undefined;
+  let lastFeeError: unknown;
+  const maxFeeEstimateAttempts = 3;
+  for (let attempt = 0; attempt < maxFeeEstimateAttempts; attempt += 1) {
+    try {
+      feeEstimate = await client.estimateTransactionFeesForWrite(call);
+      break;
+    } catch (error) {
+      lastFeeError = error;
+      const retrying = isTransientFeeError(error) && attempt + 1 < maxFeeEstimateAttempts;
+      debugForgeTransaction(
+        functionName === "settle_market"
+          ? "[FORGE SETTLE FEE ERROR]"
+          : "[FORGE WRITE 4 FEE_ESTIMATE_FAILED]",
+        {
+          method: functionName,
+          account,
+          contract: FORGE_CONTRACT_ADDRESS,
+          attempt: attempt + 1,
+          retrying,
+          error: debugError(error),
+        },
+      );
+      if (!retrying) break;
+      await new Promise<void>((resolve) =>
+        globalThis.setTimeout(resolve, attempt === 0 ? 3_000 : 6_000),
+      );
+    }
   }
-  debugForgeTransaction("[FORGE WRITE 4 FEE_ESTIMATE_OK]", {
-    method: functionName,
-    account,
-    distribution: debugTransactionValue(feeEstimate.distribution),
-    feeValue: feeEstimate.feeValue.toString(),
-    feeValueGen: formatGen(feeEstimate.feeValue, 18),
-    messageAllocationCount: feeEstimate.messageAllocations?.length ?? 0,
-  });
+  if (!feeEstimate) throw new Error(`FEE_ESTIMATE_FAILED: ${errorMessage(lastFeeError)}`);
+  debugForgeTransaction(
+    functionName === "settle_market" ? "[FORGE SETTLE FEE OK]" : "[FORGE WRITE 4 FEE_ESTIMATE_OK]",
+    {
+      method: functionName,
+      account,
+      distribution: debugTransactionValue(feeEstimate.distribution),
+      feeValue: feeEstimate.feeValue.toString(),
+      feeValueGen: formatGen(feeEstimate.feeValue, 18),
+      messageAllocationCount: feeEstimate.messageAllocations?.length ?? 0,
+    },
+  );
   return { client, call, feeEstimate };
 }
 
@@ -877,13 +933,18 @@ async function writeContract(
   onStage?: TransactionStageHandler,
 ) {
   const { client, call, feeEstimate } = await prepareForgeWrite(account, functionName, args, value);
-  debugForgeTransaction("[FORGE WRITE 5 SUBMIT_START]", {
-    method: functionName,
-    contract: FORGE_CONTRACT_ADDRESS,
-    account,
-    value: value.toString(),
-    feeValue: feeEstimate.feeValue.toString(),
-  });
+  debugForgeTransaction(
+    functionName === "settle_market"
+      ? "[FORGE SETTLE SUBMIT START]"
+      : "[FORGE WRITE 5 SUBMIT_START]",
+    {
+      method: functionName,
+      contract: FORGE_CONTRACT_ADDRESS,
+      account,
+      value: value.toString(),
+      feeValue: feeEstimate.feeValue.toString(),
+    },
+  );
   onStage?.("AWAITING_SIGNATURE");
   let hash: unknown;
   try {
@@ -908,13 +969,16 @@ async function writeContract(
     );
     throw new Error(`WRITE_SUBMISSION_FAILED: ${errorMessage(error)}`);
   }
-  debugForgeTransaction("[FORGE WRITE 7 SUBMITTED]", {
-    hash: String(hash),
-    method: functionName,
-    contract: FORGE_CONTRACT_ADDRESS,
-    providerMethod: "eth_sendTransaction via GenLayerJS",
-    protocolFeeValue: feeEstimate.feeValue.toString(),
-  });
+  debugForgeTransaction(
+    functionName === "settle_market" ? "[FORGE SETTLE SUBMITTED]" : "[FORGE WRITE 7 SUBMITTED]",
+    {
+      hash: String(hash),
+      method: functionName,
+      contract: FORGE_CONTRACT_ADDRESS,
+      providerMethod: "eth_sendTransaction via GenLayerJS",
+      protocolFeeValue: feeEstimate.feeValue.toString(),
+    },
+  );
   onStage?.("SUBMITTED");
   debugForgeTransaction("[FORGE TX RECEIPT]", {
     hash: String(hash),

@@ -89,7 +89,7 @@ function MarketDetail() {
   const positionQuery = useForgePosition(id, address);
   const bettingState = useForgeBettingState(id, address);
   const market = marketQuery.data;
-  const evidenceEnabled = Boolean(market && market.state !== "OPEN" && market.state !== "UPCOMING");
+  const evidenceEnabled = Boolean(market && market.contractState === "SETTLED");
   const binanceEvidence = useForgeSourceEvidence(
     id,
     "BINANCE",
@@ -597,7 +597,59 @@ function ActionPanel({
   }, [position?.selectedAsset]);
   const runWrite = async (kind: "bet" | "settle" | "claim" | "refund") => {
     if (!address || tx.locked) return;
+    if (kind === "settle" && import.meta.env.DEV)
+      console.debug("[FORGE SETTLE CLICK]", { marketId: market.id });
+    if (kind === "settle" && import.meta.env.DEV)
+      console.debug("[FORGE SETTLE NETWORK]", {
+        wallet: address,
+        chainId,
+        correctNetwork: !wrongNetwork,
+      });
     if (wrongNetwork && !(await requestNetworkSwitch())) return;
+    if (kind === "settle") {
+      try {
+        const currentMarket = await contractAdapter.getMarket(
+          market.id,
+          Date.now(),
+          TransactionHashVariant.LATEST_NONFINAL,
+        );
+        if (!currentMarket) {
+          await refresh("settle", market.id);
+          toast.error("Market not found", {
+            description: "This Forge market is no longer available.",
+          });
+          return;
+        }
+        if (import.meta.env.DEV)
+          console.debug("[FORGE SETTLE RECONCILE]", {
+            marketId: market.id,
+            phase: "preflight",
+            state: currentMarket.contractState,
+            settlementAvailable: currentMarket.settlementAvailable,
+          });
+        if (
+          !currentMarket.settlementAvailable ||
+          currentMarket.contractState === "SETTLED" ||
+          currentMarket.contractState === "INCONCLUSIVE"
+        ) {
+          await refresh("settle", market.id);
+          toast.error("Market resolution unavailable", {
+            description: "This market has already been resolved or is no longer available.",
+          });
+          return;
+        }
+      } catch (error) {
+        if (import.meta.env.DEV)
+          console.debug("[FORGE SETTLE RECONCILE]", {
+            marketId: market.id,
+            phase: "preflight-error",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        const mapped = mapForgeError(error, "READ_MARKET");
+        toast.error(mapped.title, { description: mapped.message });
+        return;
+      }
+    }
     const action = kind === "claim" || kind === "refund" ? kind : undefined;
     if (action && !beginClaimAction(address, market.id, action)) return;
     if (!tx.begin(kind === "bet" && position?.hasPosition ? "top_up" : kind)) {
@@ -688,6 +740,13 @@ function ActionPanel({
             next && (next.contractState === "SETTLED" || next.contractState === "INCONCLUSIVE"),
           ),
       );
+      if (import.meta.env.DEV)
+        console.debug("[FORGE SETTLE RECONCILE]", {
+          marketId: market.id,
+          phase: "post-write",
+          state: settledMarket?.contractState ?? "UNAVAILABLE",
+          settlementAvailable: settledMarket?.settlementAvailable ?? false,
+        });
       if (!settledMarket) return;
     } else {
       const updatedPosition = await reconcileAcceptedWrite(

@@ -99,6 +99,7 @@ export function mapForgeError(
   const text = normalizedText(error);
   const code = errorCode(error);
   const status = errorStatus(error);
+  const isFeeContext = context === "FEE_ESTIMATE" || context === "SETTLE";
   const isRejected =
     code === 4001 ||
     /user rejected|user denied|request rejected|denied|cancelled|canceled/.test(text);
@@ -195,7 +196,9 @@ export function mapForgeError(
   )
     return result(
       "Forge is temporarily busy",
-      "Market data is refreshing too quickly right now. Please wait a moment and try again.",
+      isFeeContext
+        ? "The network is handling too many requests right now. Please wait a moment and try again."
+        : "Market data is refreshing too quickly right now. Please wait a moment and try again.",
       { action: "retry", severity: "warning", retryable: true },
     );
 
@@ -206,8 +209,10 @@ export function mapForgeError(
     )
   )
     return result(
-      "Forge is temporarily unavailable",
-      "The network service is having trouble responding. Please try again shortly.",
+      isFeeContext ? "Network temporarily unavailable" : "Forge is temporarily unavailable",
+      isFeeContext
+        ? "StudioNext is having trouble responding. Please try again shortly."
+        : "The network service is having trouble responding. Please try again shortly.",
       { action: "retry", severity: "warning", retryable: true },
     );
 
@@ -311,6 +316,13 @@ export function mapForgeError(
   if (/market(?:\s+id)?\b.*(?:not found|does not exist)|no such market/.test(text))
     return result("Market not found", "This Forge market doesn’t exist or is no longer available.");
 
+  if (/precheck_failed|fee_estimate_failed|estimate.*fee|fee estimation/.test(text))
+    return result(
+      "Couldn’t prepare transaction",
+      "Forge couldn’t prepare this transaction right now. Please try again in a moment.",
+      { action: "retry", retryable: true },
+    );
+
   if (
     /finished_with_error|transaction_execution_failed|execution failed|transaction was submitted, but forge could not complete the action/.test(
       text,
@@ -318,8 +330,10 @@ export function mapForgeError(
     !context.startsWith("READ_")
   )
     return result(
-      "Transaction unsuccessful",
-      "The transaction was submitted, but Forge could not complete the action.",
+      context === "SETTLE" ? "Market resolution failed" : "Transaction unsuccessful",
+      context === "SETTLE"
+        ? "The transaction was submitted, but Forge could not resolve this market."
+        : "The transaction was submitted, but Forge could not complete the action.",
     );
 
   if (context === "READ_MARKET" || context === "READ_MARKETS")
