@@ -6,6 +6,11 @@ import { PoolBar, Pill, StateBadge, SERIES_COLORS } from "./Bits";
 
 export function MarketCard({ market, position }: { market: MarketView; position?: PositionView }) {
   const assets = market.assets;
+  const resolutionRequired =
+    market.settlementAvailable &&
+    market.contractState !== "SETTLED" &&
+    market.contractState !== "INCONCLUSIVE" &&
+    BigInt(Math.floor(Date.now() / 1000)) >= market.settlementDeadlineSeconds;
 
   return (
     <Link
@@ -15,7 +20,11 @@ export function MarketCard({ market, position }: { market: MarketView; position?
     >
       <div className="flex items-center justify-between gap-2">
         <Pill className="text-ember-soft">{market.category}</Pill>
-        <StateBadge state={market.state} />
+        {resolutionRequired ? (
+          <Pill className="border-warning/40 bg-warning/10 text-warning">Resolution required</Pill>
+        ) : (
+          <StateBadge state={market.state} />
+        )}
       </div>
 
       <div>
@@ -69,6 +78,8 @@ export function MarketCard({ market, position }: { market: MarketView; position?
           </span>
         ) : market.state === "INCONCLUSIVE" ? (
           <span className="text-destructive">Original stake refundable</span>
+        ) : resolutionRequired ? (
+          <span className="text-warning">Resolution required</span>
         ) : (
           <span className="text-muted-foreground">Connect wallet to see your position</span>
         )}

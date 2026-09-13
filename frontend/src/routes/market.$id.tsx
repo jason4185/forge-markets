@@ -127,6 +127,11 @@ function MarketDetail() {
   if (!market) return <PageState message="Market not found." />;
 
   const position = positionQuery.data;
+  const resolutionRequired =
+    market.settlementAvailable &&
+    market.contractState !== "SETTLED" &&
+    market.contractState !== "INCONCLUSIVE" &&
+    BigInt(Math.floor(now / 1000)) >= market.settlementDeadlineSeconds;
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-8 lg:px-6">
       <nav className="text-xs text-muted-foreground">
@@ -140,7 +145,11 @@ function MarketDetail() {
         <h1 className="text-3xl font-semibold text-foreground lg:text-4xl">
           Which commodity leads this window?
         </h1>
-        <StateBadge state={market.state} />
+        {resolutionRequired ? (
+          <Pill className="border-warning/40 bg-warning/10 text-warning">Resolution required</Pill>
+        ) : (
+          <StateBadge state={market.state} />
+        )}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Pill>
@@ -565,6 +574,13 @@ function ActionPanel({
   const [pick, setPick] = useState<Asset>(position?.selectedAsset ?? market.assets[0]!);
   const [amount, setAmount] = useState("1");
   const wrongNetwork = isConnected && chainId !== FORGE_CHAIN_ID;
+  const settlementActionAvailable =
+    market.settlementAvailable &&
+    market.contractState !== "SETTLED" &&
+    market.contractState !== "INCONCLUSIVE";
+  const settlementDeadlinePassed =
+    settlementActionAvailable &&
+    BigInt(Math.floor(Date.now() / 1000)) >= market.settlementDeadlineSeconds;
   const requestNetworkSwitch = async () => {
     try {
       return await switchNetwork("market-detail");
@@ -706,6 +722,52 @@ function ActionPanel({
       </Button>
     </div>
   ) : null;
+  if (settlementActionAvailable)
+    return (
+      <>
+        <aside className="rounded-2xl border border-border bg-panel p-5">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-warning">
+            <Clock className="h-4 w-4" />
+            {settlementDeadlinePassed ? "Settlement deadline passed" : "Ready for settlement"}
+          </h2>
+          {networkNotice}
+          {position?.hasPosition ? (
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <Stat label="Your Pick" value={formatAsset(position.selectedAsset)} />
+              <Stat label="Your Stake" value={`${formatGen(position.totalStake)} GEN`} />
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Settlement is permissionless; you do not need a position to resolve this market.
+            </p>
+          )}
+          <p className="mt-4 text-xs text-muted-foreground">
+            {settlementDeadlinePassed
+              ? "Resolve this market to finalize it as inconclusive."
+              : "The performance window has ended. Settle this market using the contract's source consensus."}
+          </p>
+          {!address ? (
+            <Button className="mt-4 w-full rounded-xl" onClick={connectWallet}>
+              Connect Wallet to Settle
+            </Button>
+          ) : !wrongNetwork ? (
+            <Button
+              variant="outline"
+              className="mt-4 w-full rounded-xl"
+              disabled={tx.locked}
+              onClick={() => runWrite("settle")}
+            >
+              {tx.locked
+                ? "Transaction pending…"
+                : settlementDeadlinePassed
+                  ? "Resolve Market"
+                  : "Settle Market"}
+            </Button>
+          ) : null}
+        </aside>
+        <TransactionDialog state={tx.state} busy={tx.busy} onClose={tx.close} />
+      </>
+    );
   if (positionUnavailable)
     return (
       <>
