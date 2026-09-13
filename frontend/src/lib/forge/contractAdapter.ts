@@ -181,7 +181,7 @@ type ForgeWriteCall = {
   args: CalldataEncodable[];
   value: bigint;
 };
-type ForgeFeeEstimate = Awaited<ReturnType<ForgeWriteClient["estimateTransactionFeesForWrite"]>>;
+type ForgeFeeEstimate = Awaited<ReturnType<ForgeWriteClient["estimateTransactionFees"]>>;
 
 function isTransientFeeError(error: unknown): boolean {
   const details = debugError(error);
@@ -821,7 +821,22 @@ async function prepareForgeWrite(
 }> {
   if (!isAddress(account)) throw new Error("Invalid wallet address.");
   if (value < 0n) throw new Error("Invalid transaction value.");
-  const injectedProvider = await getActiveInjectedProvider();
+  let injectedProvider: Awaited<ReturnType<typeof getActiveInjectedProvider>>;
+  try {
+    injectedProvider = await getActiveInjectedProvider();
+  } catch (error) {
+    debugForgeTransaction("[FORGE WRITE 1 PRECHECK]", {
+      method: functionName,
+      args: args.map(debugTransactionValue),
+      contract: FORGE_CONTRACT_ADDRESS,
+      wallet: account,
+      walletChainId: "unavailable",
+      targetChainId: FORGE_CHAIN_ID,
+      value: value.toString(),
+      error: debugError(error),
+    });
+    throw new Error(`PRECHECK_FAILED: ${errorMessage(error)}`);
+  }
   if (!injectedProvider)
     throw new Error("No injected wallet detected. Install or enable an EIP-1193 wallet.");
   let chainId: number;
@@ -904,7 +919,17 @@ async function prepareForgeWrite(
   const maxFeeEstimateAttempts = 3;
   for (let attempt = 0; attempt < maxFeeEstimateAttempts; attempt += 1) {
     try {
-      feeEstimate = await client.estimateTransactionFeesForWrite(call);
+      // A settlement can execute gl.vm.run_nondet and fetch three external
+      // sources. Studio's concrete sim_estimateTransactionFees path is not a
+      // reliable representation of that write: the same call was finalized
+      // successfully by Studio while this simulation returned execution failed.
+      // Use the SDK's live policy estimate for this permissionless write. Other
+      // methods retain concrete simulation because their caller-sensitive
+      // validation is useful and currently supported by Studio.
+      feeEstimate =
+        functionName === "settle_market"
+          ? await client.estimateTransactionFees()
+          : await client.estimateTransactionFeesForWrite(call);
       break;
     } catch (error) {
       lastFeeError = error;
@@ -938,6 +963,10 @@ async function prepareForgeWrite(
       feeValue: feeEstimate.feeValue.toString(),
       feeValueGen: formatGen(feeEstimate.feeValue, 18),
       messageAllocationCount: feeEstimate.messageAllocations?.length ?? 0,
+      estimator:
+        functionName === "settle_market"
+          ? "estimateTransactionFees (Studio fee policy)"
+          : "estimateTransactionFeesForWrite",
     },
   );
   return { client, call, feeEstimate };

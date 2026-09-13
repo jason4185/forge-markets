@@ -55,6 +55,10 @@ function errorStatus(error: unknown): number | undefined {
   return typeof status === "number" && Number.isSafeInteger(status) ? status : undefined;
 }
 
+function hasTransactionHash(error: unknown): boolean {
+  return isRecord(error) && typeof error["transactionHash"] === "string";
+}
+
 function normalizedText(error: unknown): string {
   const parts: string[] = [errorMessage(error)];
   if (isRecord(error)) {
@@ -352,6 +356,13 @@ export function mapForgeError(
       { severity: "warning", retryable: false },
     );
 
+  if (hasTransactionHash(error) && !context.startsWith("READ_"))
+    return result(
+      "Still confirming transaction",
+      "Transaction submitted, but confirmation is taking longer than expected. It may still be processing.",
+      { severity: "warning", retryable: false },
+    );
+
   if (context === "READ_MARKET" || context === "READ_MARKETS")
     return result(
       "Market data temporarily unavailable",
@@ -403,12 +414,9 @@ export function mapForgeError(
     );
   if (context === "SETTLE")
     return result(
-      "Couldn’t settle market",
-      "Forge couldn’t complete settlement. Please try again.",
-      {
-        action: "retry",
-        retryable: true,
-      },
+      "Couldn’t prepare transaction",
+      "Forge couldn’t prepare this transaction right now. Please try again in a moment.",
+      { action: "retry", retryable: true },
     );
   if (context === "CLAIM")
     return result(

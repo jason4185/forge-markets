@@ -734,6 +734,7 @@ function ActionPanel({
       );
       return;
     }
+    let settlementPending = false;
     const acceptedTitle =
       kind === "claim"
         ? "Claim accepted"
@@ -769,7 +770,10 @@ function ActionPanel({
           contractAdapter.getMarket(market.id, Date.now(), TransactionHashVariant.LATEST_NONFINAL),
         (next) =>
           Boolean(
-            next && (next.contractState === "SETTLED" || next.contractState === "INCONCLUSIVE"),
+            next &&
+            (next.contractState === "SETTLED" ||
+              next.contractState === "SETTLEMENT_PENDING" ||
+              next.contractState === "INCONCLUSIVE"),
           ),
       );
       if (import.meta.env.DEV)
@@ -779,6 +783,8 @@ function ActionPanel({
           state: settledMarket?.contractState ?? "UNAVAILABLE",
           settlementAvailable: settledMarket?.settlementAvailable ?? false,
         });
+      settlementPending = settledMarket?.contractState === "SETTLEMENT_PENDING";
+      if (settlementPending) tx.done(result.hash, "Settlement attempt completed");
       if (!settledMarket) return;
     } else {
       const updatedPosition = await reconcileAcceptedWrite(
@@ -795,7 +801,9 @@ function ActionPanel({
         ? "Claim accepted"
         : kind === "refund"
           ? "Refund accepted"
-          : "Transaction accepted",
+          : kind === "settle" && settlementPending
+            ? "Settlement attempt completed"
+            : "Transaction accepted",
     );
   };
   const connectWallet = () => connect({ connector: forgeInjectedConnector });

@@ -39,7 +39,9 @@ export function transactionStageCopy(state: TransactionDialogState) {
           ? "Your refund was accepted. The GEN transfer completes with GenLayer finalization."
           : state.action === "claim"
             ? "Your claim was accepted. The GEN transfer completes with GenLayer finalization."
-            : "The contract execution finished successfully.",
+            : state.message === "Settlement attempt completed"
+              ? "No 2-of-3 source consensus yet. This market remains pending and can be retried before the settlement deadline."
+              : "The contract execution finished successfully.",
     };
   if (state.stage === "UNCERTAIN")
     return {

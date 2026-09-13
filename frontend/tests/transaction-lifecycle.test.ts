@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { waitForAcceptedExecution } from "../src/lib/forge/contractAdapter";
 import { mapForgeError } from "../src/lib/forge/errors";
 import { reconcileAcceptedWrite } from "../src/lib/forge/retry";
+import { transactionStageCopy } from "../src/lib/forge/transactionState";
 
 function receipt(statusName: string, txExecutionResultName = "FINISHED_WITH_RETURN") {
   return { statusName, txExecutionResultName } as never;
@@ -97,5 +98,28 @@ describe("Forge transaction lifecycle", () => {
     expect(mapForgeError(new Error("FINISHED_WITH_ERROR"), "SETTLE").title).toBe(
       "Market resolution failed",
     );
+    expect(mapForgeError(new Error("provider unavailable"), "SETTLE").title).toBe(
+      "Couldn’t prepare transaction",
+    );
+    expect(
+      mapForgeError(
+        Object.assign(new Error("unexpected decision read error"), {
+          transactionHash: "0xhash",
+        }),
+        "SETTLE",
+      ).title,
+    ).toBe("Still confirming transaction");
+  });
+
+  test("treats a successful pending settlement as a completed attempt", () => {
+    const copy = transactionStageCopy({
+      open: true,
+      stage: "DONE",
+      action: "settle",
+      message: "Settlement attempt completed",
+    });
+
+    expect(copy.title).toBe("Settlement attempt completed");
+    expect(copy.message).toContain("No 2-of-3 source consensus yet");
   });
 });
