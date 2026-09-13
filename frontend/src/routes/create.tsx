@@ -96,6 +96,7 @@ function CreatePage() {
     if (!result.ok) {
       tx.fail(
         result.error ?? mapForgeError(new Error("CREATE_MARKET_FAILED"), "CREATE_MARKET").message,
+        result.hash,
       );
       return;
     }

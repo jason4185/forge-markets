@@ -147,6 +147,11 @@ export function mapForgeError(
       "Your transaction wasn’t submitted. Check your wallet connection and try again.",
       { action: "retry", retryable: true },
     );
+  if (/transaction_(canceled|cancelled|rejected|failed)/.test(text) && !context.startsWith("READ_"))
+    return result(
+      context === "SETTLE" ? "Market resolution failed" : "Transaction unsuccessful",
+      "The transaction was submitted, but Forge could not complete the action.",
+    );
   if (
     /no injected wallet|no_injected_provider|install or enable an injected wallet|no wallet detected/.test(
       text,
@@ -334,6 +339,17 @@ export function mapForgeError(
       context === "SETTLE"
         ? "The transaction was submitted, but Forge could not resolve this market."
         : "The transaction was submitted, but Forge could not complete the action.",
+    );
+
+  if (
+    /transaction_(undetermined|validators_timeout|leader_timeout)|decision.*(?:timeout|uncertain)/.test(
+      text,
+    )
+  )
+    return result(
+      "Still confirming transaction",
+      "Transaction submitted, but confirmation is taking longer than expected. It may still be processing.",
+      { severity: "warning", retryable: false },
     );
 
   if (context === "READ_MARKET" || context === "READ_MARKETS")

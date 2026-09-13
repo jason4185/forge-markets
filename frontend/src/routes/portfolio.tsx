@@ -110,6 +110,7 @@ function PortfolioPage() {
         result.error ??
           mapForgeError(new Error("CLAIM_ACTION_FAILED"), type === "claim" ? "CLAIM" : "REFUND")
             .message,
+        result.hash,
       );
       return;
     }

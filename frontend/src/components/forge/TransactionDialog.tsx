@@ -89,9 +89,16 @@ export function useTransactionDialog() {
       message: undefined,
     }));
   }, []);
-  const fail = useCallback((error: string) => {
+  const fail = useCallback((error: string, hash?: string) => {
     activeWrite.current = false;
-    setState((current) => ({ ...current, open: true, stage: "ERROR", error, message: undefined }));
+    setState((current) => ({
+      ...current,
+      open: true,
+      stage: "ERROR",
+      hash: hash ?? current.hash,
+      error,
+      message: undefined,
+    }));
   }, []);
   const close = useCallback(
     () =>

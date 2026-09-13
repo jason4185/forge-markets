@@ -90,6 +90,23 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+type ErrorWithTransactionHash = Error & { transactionHash?: string };
+
+function withTransactionHash(error: unknown, hash: string): ErrorWithTransactionHash {
+  const wrapped = (
+    error instanceof Error ? error : new Error(errorMessage(error))
+  ) as ErrorWithTransactionHash;
+  if (isMap(error)) Object.assign(wrapped, error);
+  wrapped.transactionHash = hash;
+  return wrapped;
+}
+
+function transactionHashFrom(error: unknown): string | undefined {
+  return isMap(error) && typeof error["transactionHash"] === "string"
+    ? error["transactionHash"]
+    : undefined;
+}
+
 function readErrorContext(functionName: string): ForgeErrorContext {
   switch (functionName) {
     case "get_market":
@@ -672,11 +689,8 @@ export function executionResultName(receipt: RawMap): string | undefined {
   return undefined;
 }
 
-const TERMINAL_TRANSACTION_STATUSES = new Set([
-  "CANCELED",
-  "CANCELLED",
-  "REJECTED",
-  "FAILED",
+const TRANSACTION_FAILURE_STATUSES = new Set(["CANCELED", "CANCELLED", "REJECTED", "FAILED"]);
+const TRANSACTION_UNCERTAIN_STATUSES = new Set([
   "UNDETERMINED",
   "VALIDATORS_TIMEOUT",
   "LEADER_TIMEOUT",
@@ -745,9 +759,11 @@ export async function waitForAcceptedExecution({
           onStage?.("SUCCESS");
           return { confirmed: true, status, receipt: value };
         }
-        if (TERMINAL_TRANSACTION_STATUSES.has(status ?? "")) {
+        if (TRANSACTION_FAILURE_STATUSES.has(status ?? "")) {
           throw new Error(`TRANSACTION_${status}`);
         }
+        if (TRANSACTION_UNCERTAIN_STATUSES.has(status ?? ""))
+          return { confirmed: false, status, receipt: value };
         // An accepted transaction with an unknown execution result is not
         // success. Return it as uncertain instead of spinning until finality.
         if (status === TransactionStatus.ACCEPTED || status === TransactionStatus.FINALIZED)
@@ -998,11 +1014,12 @@ async function writeContract(
       ...(onStage ? { onStage } : {}),
     });
   } catch (error) {
+    const decisionError = withTransactionHash(error, String(hash));
     const phase = errorMessage(error).includes("FINISHED_WITH_ERROR")
       ? "[FORGE TX_EXECUTION_FAILED]"
       : "[FORGE TX_DECISION_FAILED]";
-    debugForgeTransaction(phase, { hash: String(hash), error: debugError(error) });
-    throw error;
+    debugForgeTransaction(phase, { hash: String(hash), error: debugError(decisionError) });
+    throw decisionError;
   }
   if (!result.confirmed)
     debugForgeTransaction("[FORGE TX_STATUS_UNCERTAIN]", {
@@ -1014,8 +1031,18 @@ async function writeContract(
 }
 
 export function contractError(error: unknown, context: ForgeErrorContext = "GENERAL"): string {
-  logForgeError(error, context);
+  const transactionHash = transactionHashFrom(error);
+  logForgeError(error, context, transactionHash);
   return mapForgeError(error, context).message;
+}
+
+function writeFailure(error: unknown, context: ForgeErrorContext): ContractWriteResult {
+  const hash = transactionHashFrom(error);
+  return {
+    ok: false,
+    ...(hash ? { hash } : {}),
+    error: contractError(error, context),
+  };
 }
 
 export const contractAdapter = {
@@ -1355,7 +1382,7 @@ export const contractAdapter = {
       );
       return { ok: true, hash: receipt.hash, confirmed: receipt.confirmed };
     } catch (error) {
-      return { ok: false, error: contractError(error, "CREATE_MARKET") };
+      return writeFailure(error, "CREATE_MARKET");
     }
   },
 
@@ -1376,7 +1403,7 @@ export const contractAdapter = {
       );
       return { ok: true, hash: receipt.hash, confirmed: receipt.confirmed };
     } catch (error) {
-      return { ok: false, error: contractError(error, "PLACE_BET") };
+      return writeFailure(error, "PLACE_BET");
     }
   },
 
@@ -1395,7 +1422,7 @@ export const contractAdapter = {
       );
       return { ok: true, hash: receipt.hash, confirmed: receipt.confirmed };
     } catch (error) {
-      return { ok: false, error: contractError(error, "SETTLE") };
+      return writeFailure(error, "SETTLE");
     }
   },
 
@@ -1414,7 +1441,7 @@ export const contractAdapter = {
       );
       return { ok: true, hash: receipt.hash, confirmed: receipt.confirmed };
     } catch (error) {
-      return { ok: false, error: contractError(error, "CLAIM") };
+      return writeFailure(error, "CLAIM");
     }
   },
 
@@ -1433,7 +1460,7 @@ export const contractAdapter = {
       );
       return { ok: true, hash: receipt.hash, confirmed: receipt.confirmed };
     } catch (error) {
-      return { ok: false, error: contractError(error, "REFUND") };
+      return writeFailure(error, "REFUND");
     }
   },
 };

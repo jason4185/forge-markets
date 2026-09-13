@@ -715,7 +715,10 @@ function ActionPanel({
             : kind === "claim"
               ? "CLAIM"
               : "REFUND";
-      tx.fail(result.error ?? mapForgeError(new Error("WRITE_FAILED"), context).message);
+      tx.fail(
+        result.error ?? mapForgeError(new Error("WRITE_FAILED"), context).message,
+        result.hash,
+      );
       return;
     }
     if (result.confirmed !== true) {
