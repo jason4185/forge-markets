@@ -55,7 +55,7 @@ import {
   useNow,
   useRefreshForge,
 } from "@/lib/forge/useForge";
-import type { Asset } from "@/lib/forge/types";
+import type { Asset, SourceStatus } from "@/lib/forge/types";
 
 export const Route = createFileRoute("/market/$id")({
   head: ({ params }) => ({
@@ -437,6 +437,7 @@ function SettlementCard({
         {evidence.map((row) => {
           const current = row.evidence;
           const status = current?.status ?? "UNAVAILABLE";
+          const statusLabel = sourceStatusLabel(status);
           return (
             <div key={row.source} className="rounded-xl border border-border bg-panel-2">
               <button
@@ -446,9 +447,9 @@ function SettlementCard({
                 <span className="flex items-center gap-3">
                   <span className="text-foreground">{SOURCE_LABEL[row.source]}</span>
                   <span
-                    className={`rounded-full border px-2 py-0.5 text-[10px] ${status === "VALID" ? "border-success/40 bg-success/10 text-success" : status === "TIE" ? "border-warning/40 bg-warning/10 text-warning" : "border-border bg-muted/40 text-muted-foreground"}`}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] ${sourceStatusClass(status)}`}
                   >
-                    {row.loading ? "LOADING" : status}
+                    {row.loading ? "LOADING" : statusLabel}
                   </span>
                 </span>
                 <span className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -468,7 +469,9 @@ function SettlementCard({
                     <p className="text-xs text-muted-foreground">
                       {row.error
                         ? mapForgeError(row.errorValue, "READ_SOURCE_EVIDENCE").message
-                        : "No candle evidence returned by this source yet."}
+                        : status === "INVALID"
+                          ? "This source returned invalid evidence."
+                          : "No candle evidence returned by this source yet."}
                     </p>
                   ) : (
                     <table className="w-full text-left text-xs">
@@ -522,6 +525,26 @@ function SettlementCard({
   );
 }
 
+function sourceStatusLabel(status: SourceStatus): string {
+  const labels: Record<SourceStatus, string> = {
+    VALID: "Valid",
+    TIE: "Tie",
+    UNAVAILABLE: "Unavailable",
+    INVALID: "Invalid evidence",
+  };
+  return labels[status];
+}
+
+function sourceStatusClass(status: SourceStatus): string {
+  const classes: Record<SourceStatus, string> = {
+    VALID: "border-success/40 bg-success/10 text-success",
+    TIE: "border-warning/40 bg-warning/10 text-warning",
+    UNAVAILABLE: "border-border bg-muted/40 text-muted-foreground",
+    INVALID: "border-destructive/40 bg-destructive/10 text-destructive",
+  };
+  return classes[status];
+}
+
 const RULES = [
   "Exact 1-hour UTC windows, starting on exact UTC-hour boundaries.",
   "Betting closes when the performance hour begins.",
@@ -529,7 +552,7 @@ const RULES = [
   "One commodity per wallet per market. Same-side top-ups allowed before close; switching sides is not.",
   "0% protocol fee.",
   "Settlement uses Binance, Bitget and Gate — each source independently ranks the three commodities using its own exact 1h open/close return. Returns are never averaged across exchanges.",
-  "2-of-3 matching VALID source winners settle the market. A TIE or UNAVAILABLE source casts no vote.",
+  "2-of-3 matching VALID source winners settle the market. A TIE, UNAVAILABLE or INVALID source casts no vote.",
   "30-minute retry window after the market ends.",
   "If no 2-of-3 by the deadline: INCONCLUSIVE and users self-claim original-stake refunds.",
   "If the consensus-winning commodity has zero GEN backing while the total pool is nonzero: INCONCLUSIVE and refunds apply.",

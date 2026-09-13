@@ -70,7 +70,7 @@ export interface ProtocolConfig {
   maxActivities: number;
 }
 
-export type SourceStatus = "VALID" | "TIE" | "UNAVAILABLE";
+export type SourceStatus = "VALID" | "TIE" | "UNAVAILABLE" | "INVALID";
 
 export interface EvidenceAsset {
   asset: Asset;

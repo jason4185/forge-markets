@@ -266,7 +266,8 @@ function asSource(value: unknown): Source {
 
 function asSourceStatus(value: unknown): SourceStatus {
   const status = asString(value);
-  if (status === "VALID" || status === "TIE" || status === "UNAVAILABLE") return status;
+  if (status === "VALID" || status === "TIE" || status === "UNAVAILABLE" || status === "INVALID")
+    return status;
   throw new Error("Contract response has an invalid source status.");
 }
 
@@ -534,7 +535,8 @@ function normalizeEvidence(
       asString(row["interval"]) !== "1h"
     )
       throw new Error("Source evidence row window mismatch.");
-    if (valid !== (status !== "UNAVAILABLE")) throw new Error("Source evidence validity mismatch.");
+    if (valid !== (status === "VALID" || status === "TIE"))
+      throw new Error("Source evidence validity mismatch.");
     const timestampUnit = asString(row["timestamp_unit"]);
     const timestampValue = asString(row["candle_timestamp"]);
     const candleTimestamp = timestampValue ? asBigInt(timestampValue) : 0n;
@@ -556,7 +558,7 @@ function normalizeEvidence(
       )
         throw new Error("Source evidence price is invalid.");
     } else if (timestampValue || open || close || timestampUnit) {
-      throw new Error("Unavailable source evidence is not empty.");
+      throw new Error("Non-valid source evidence is not empty.");
     }
     const normalizedTimestampUnit: "s" | "ms" = timestampUnit === "ms" ? "ms" : "s";
     return {
@@ -580,7 +582,7 @@ function normalizeEvidence(
     interval,
     status,
     winner,
-    assets: status === "UNAVAILABLE" ? [] : assets,
+    assets: status === "UNAVAILABLE" || status === "INVALID" ? [] : assets,
   };
 }
 

@@ -121,7 +121,7 @@ under the same rules for every caller.
 | --- | --- |
 | Network | GenLayer StudioNext |
 | Chain ID | `61997` |
-| Contract | [`0xc93d27132e62467183bB22DF335368C378379C09`](https://explorer-studio-dev.genlayer.com/address/0xc93d27132e62467183bB22DF335368C378379C09) |
+| Contract | [`0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15`](https://explorer-studio-dev.genlayer.com/address/0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15) |
 | RPC | `https://studio-dev.genlayer.com/api` |
 
 ## Contract interface

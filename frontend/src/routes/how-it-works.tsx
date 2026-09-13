@@ -34,7 +34,7 @@ const STEPS = [
   },
   {
     title: "Two matching valid source winners out of three settle the market",
-    body: "A source that returns a TIE or is UNAVAILABLE casts no vote. There is a 30-minute retry window after the market ends, and settlement is permissionless — anyone can trigger it.",
+    body: "A source that returns a TIE, is UNAVAILABLE, or returns INVALID evidence casts no vote. There is a 30-minute retry window after the market ends, and settlement is permissionless — anyone can trigger it.",
   },
   {
     title: "Winning side shares the whole pool pari-mutually, 0% protocol fee",
@@ -104,7 +104,7 @@ function HowItWorks() {
               2 matching VALID winners → market settles GOLD
             </p>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              TIE and UNAVAILABLE sources cast no vote.
+              TIE, UNAVAILABLE and INVALID sources cast no vote.
             </p>
           </div>
         </div>

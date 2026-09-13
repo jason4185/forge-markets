@@ -36,6 +36,7 @@ STATE_INCONCLUSIVE = "INCONCLUSIVE"
 SOURCE_VALID = "VALID"
 SOURCE_TIE = "TIE"
 SOURCE_UNAVAILABLE = "UNAVAILABLE"
+SOURCE_INVALID = "INVALID"
 
 DURATION_SECONDS = 3600
 SETTLEMENT_RETRY_WINDOW_SECONDS = 1800
@@ -46,6 +47,7 @@ PRICE_SCALE = GEN_SCALE
 RETURN_SCALE = 1_000_000
 MAX_RESPONSE_BYTES = 65_536
 MAX_PAGE_SIZE = 50
+MAX_SOURCE_ATTEMPTS = 3
 
 # These capacities bound every persistent key namespace.  The maps are used for
 # keyed lookup and are never allowed to grow beyond these protocol limits.
@@ -227,23 +229,32 @@ def _compare_return(left_open: int, left_close: int, right_open: int, right_clos
 def _request_json(url: str):
     try:
         response = gl.nondet.web.get(url, headers={"Accept": "application/json"})
-        if response.status != 200 or response.body is None or len(response.body) > MAX_RESPONSE_BYTES:
-            return None
-        return json.loads(response.body.decode("utf-8"))
-    except (gl.nondet.NondetException, gl.vm.UserError, ValueError, TypeError, UnicodeError, AttributeError):
-        return None
+    except Exception:
+        return SOURCE_UNAVAILABLE, None
+    try:
+        status = int(response.status)
+        body = response.body
+        if not isinstance(body, bytes) or len(body) == 0 or len(body) > MAX_RESPONSE_BYTES:
+            return SOURCE_INVALID, None
+        if status >= 500 or status in (408, 425, 429):
+            return SOURCE_UNAVAILABLE, None
+        if status != 200:
+            return SOURCE_INVALID, None
+        return "OK", json.loads(body.decode("utf-8"))
+    except Exception:
+        return SOURCE_INVALID, None
 
 
-def _one_array_candle(payload, timestamp: int, source: str):
+def _row_from_payload(source: str, payload, expected_start: int, expected_end: int):
     if not isinstance(payload, list) or len(payload) != 1:
         return None
     row = payload[0]
     expected_length = 12 if source == SOURCE_BINANCE else 7
     if not isinstance(row, list) or len(row) != expected_length:
         return None
-    if _parse_integer(row[0]) != timestamp:
+    if _parse_integer(row[0]) != expected_start:
         return None
-    if source == SOURCE_BINANCE and _parse_integer(row[6]) != timestamp + 3_599_999:
+    if source == SOURCE_BINANCE and _parse_integer(row[6]) != expected_end - 1:
         return None
     opening = _parse_price(row[1])
     high = _parse_price(row[2])
@@ -254,7 +265,7 @@ def _one_array_candle(payload, timestamp: int, source: str):
         closing = _parse_price(row[2])
     if opening is None or high is None or low is None or closing is None:
         return None
-    return timestamp, opening, closing
+    return expected_start, opening, closing
 
 
 def _gate_candle(payload, timestamp: int, symbol: str):
@@ -294,21 +305,32 @@ def _fetch_candle(source: str, category: u256, outcome: u256, start_seconds: u25
     end_ms = _mul_u256(end_seconds, 1000)
     if source == SOURCE_BINANCE:
         url = "https://fapi.binance.com/fapi/v1/klines?symbol=" + symbol + "&interval=1h&startTime=" + str(start_ms) + "&endTime=" + str(end_ms) + "&limit=1"
-        return _one_array_candle(_request_json(url), start_ms, SOURCE_BINANCE)
+        request_status, payload = _request_json(url)
+        if request_status != "OK":
+            return request_status, None
+        row = _row_from_payload(SOURCE_BINANCE, payload, start_ms, end_ms)
+        return ("OK", row) if row is not None else (SOURCE_INVALID, None)
     if source == SOURCE_BITGET:
         url = "https://api.bitget.com/api/v3/market/candles?category=USDT-FUTURES&symbol=" + symbol + "&interval=1H&startTime=" + str(start_ms) + "&endTime=" + str(end_ms - 1) + "&limit=1"
-        payload = _request_json(url)
+        request_status, payload = _request_json(url)
+        if request_status != "OK":
+            return request_status, None
         if not isinstance(payload, dict) or payload.get("code") != "00000" or "data" not in payload:
-            return None
+            return SOURCE_INVALID, None
         if payload.get("source", SOURCE_BITGET) != SOURCE_BITGET or payload.get("category", "USDT-FUTURES") != "USDT-FUTURES" or payload.get("symbol", symbol) != symbol:
-            return None
+            return SOURCE_INVALID, None
         if payload.get("interval", "1H") != "1H" or payload.get("type", "market") not in ("market", ""):
-            return None
-        return _one_array_candle(payload["data"], start_ms, SOURCE_BITGET)
+            return SOURCE_INVALID, None
+        row = _row_from_payload(SOURCE_BITGET, payload["data"], start_ms, end_ms)
+        return ("OK", row) if row is not None else (SOURCE_INVALID, None)
     if source == SOURCE_GATE:
         url = "https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=" + symbol + "&interval=1h&from=" + str(start_seconds) + "&to=" + str(end_seconds - 1)
-        return _gate_candle(_request_json(url), start_seconds, symbol)
-    return None
+        request_status, payload = _request_json(url)
+        if request_status != "OK":
+            return request_status, None
+        row = _gate_candle(payload, start_seconds, symbol)
+        return ("OK", row) if row is not None else (SOURCE_INVALID, None)
+    return SOURCE_INVALID, None
 
 
 def _empty_asset(source: str, category: u256, outcome: u256, start: u256, end: u256) -> dict:
@@ -328,26 +350,26 @@ def _empty_asset(source: str, category: u256, outcome: u256, start: u256, end: u
     }
 
 
-def _unavailable_result(source: str, category: u256, start: u256, end: u256) -> dict:
+def _empty_source_result(source: str, category: u256, start: u256, end: u256, status: str) -> dict:
     return {
         "source": source,
         "category": category,
         "market_start": start,
         "market_end": end,
         "interval": "1h",
-        "source_status": SOURCE_UNAVAILABLE,
+        "source_status": status,
         "source_winner": "",
         "source_winner_id": OUTCOME_NONE,
         "assets": [_empty_asset(source, category, outcome, start, end) for outcome in range(OUTCOME_COUNT)],
     }
 
 
-def _source_result(source: str, category: u256, start: u256, end: u256) -> dict:
+def _source_once(source: str, category: u256, start: u256, end: u256) -> dict:
     rows = []
     for outcome in range(OUTCOME_COUNT):
-        candle = _fetch_candle(source, category, outcome, start, end)
-        if candle is None:
-            return _unavailable_result(source, category, start, end)
+        candle_status, candle = _fetch_candle(source, category, outcome, start, end)
+        if candle_status != "OK":
+            return _empty_source_result(source, category, start, end, candle_status)
         timestamp, opening, closing = candle
         opening_scaled, opening_text = opening
         closing_scaled, closing_text = closing
@@ -392,6 +414,17 @@ def _source_result(source: str, category: u256, start: u256, end: u256) -> dict:
     }
 
 
+def _fetch_source(source: str, category: u256, start: u256, end: u256) -> dict:
+    for _attempt in range(MAX_SOURCE_ATTEMPTS):
+        try:
+            result = _source_once(source, category, start, end)
+        except Exception:
+            result = _empty_source_result(source, category, start, end, SOURCE_INVALID)
+        if result["source_status"] != SOURCE_UNAVAILABLE:
+            return result
+    return _empty_source_result(source, category, start, end, SOURCE_UNAVAILABLE)
+
+
 def _evidence_key(evidence: dict, source: str, category: u256, start: u256, end: u256) -> str | None:
     if not isinstance(evidence, dict) or evidence.get("source") != source or evidence.get("category") != category:
         return None
@@ -400,7 +433,7 @@ def _evidence_key(evidence: dict, source: str, category: u256, start: u256, end:
     status = evidence.get("source_status")
     winner = evidence.get("source_winner")
     winner_id = evidence.get("source_winner_id", OUTCOME_NONE)
-    if status not in (SOURCE_VALID, SOURCE_TIE, SOURCE_UNAVAILABLE) or not isinstance(winner, str) or not _is_u256(winner_id) or winner_id > OUTCOME_NONE:
+    if status not in (SOURCE_VALID, SOURCE_TIE, SOURCE_UNAVAILABLE, SOURCE_INVALID) or not isinstance(winner, str) or not _is_u256(winner_id) or winner_id > OUTCOME_NONE:
         return None
     if status == SOURCE_VALID and (winner_id >= OUTCOME_COUNT or winner != _outcome_name(category, winner_id)):
         return None
@@ -422,7 +455,7 @@ def _evidence_key(evidence: dict, source: str, category: u256, start: u256, end:
             return None
         if not isinstance(row.get("return_units"), int) or isinstance(row.get("return_units"), bool) or not isinstance(row.get("valid"), bool):
             return None
-        valid = status != SOURCE_UNAVAILABLE
+        valid = status in (SOURCE_VALID, SOURCE_TIE)
         if row["valid"] != valid:
             return None
         if valid:
@@ -439,26 +472,6 @@ def _evidence_key(evidence: dict, source: str, category: u256, start: u256, end:
     return "\x1f".join(parts)
 
 
-def _source_consensus(source: str, category: u256, start: u256, end: u256) -> dict:
-    def leader_fn():
-        return _source_result(source, category, start, end)
-
-    def validator_fn(leaders_result) -> bool:
-        if not isinstance(leaders_result, gl.vm.Return):
-            return False
-        leader_key = _evidence_key(leaders_result.calldata, source, category, start, end)
-        if leader_key is None:
-            return False
-        try:
-            validator_result = _source_result(source, category, start, end)
-            validator_key = _evidence_key(validator_result, source, category, start, end)
-        except (gl.nondet.NondetException, gl.vm.UserError, ValueError, TypeError, UnicodeError, AttributeError, KeyError, OverflowError):
-            return False
-        return leader_key == validator_key
-
-    return gl.vm.run_nondet(leader_fn, validator_fn)
-
-
 def _consensus_winner(results: list[dict]) -> int:
     votes = []
     for result in results:
@@ -470,6 +483,126 @@ def _consensus_winner(results: list[dict]) -> int:
     if votes[1] != OUTCOME_NONE and votes[1] == votes[2]:
         return votes[1]
     return OUTCOME_NONE
+
+
+def _collect_sources(category: u256, start: u256, end: u256) -> dict:
+    results = []
+    for source in _sources():
+        results.append(_fetch_source(source, category, start, end))
+    winner = _consensus_winner(results)
+    consensus_count = 0
+    valid_source_count = 0
+    for result in results:
+        if result.get("source_status") == SOURCE_VALID:
+            valid_source_count += 1
+            if result.get("source_winner_id") == winner:
+                consensus_count += 1
+    return {
+        "source_results": results,
+        "valid_source_count": valid_source_count,
+        "consensus_winner": winner,
+        "consensus_count": consensus_count,
+    }
+
+
+def _proposal_source_result(proposal: dict, source: str):
+    results = proposal.get("source_results") if isinstance(proposal, dict) else None
+    sources = _sources()
+    if not isinstance(results, list) or len(results) != len(sources):
+        return None
+    for index in range(len(sources)):
+        if sources[index] == source:
+            result = results[index]
+            if isinstance(result, dict) and result.get("source") == source:
+                return result
+    return None
+
+
+def _proposal_valid(proposal: dict, category: u256, start: u256, end: u256) -> bool:
+    if not isinstance(proposal, dict):
+        return False
+    results = proposal.get("source_results")
+    sources = _sources()
+    if not isinstance(results, list) or len(results) != len(sources):
+        return False
+    valid_source_count = 0
+    for index in range(len(sources)):
+        result = results[index]
+        if not isinstance(result, dict) or _evidence_key(result, sources[index], category, start, end) is None:
+            return False
+        if result.get("source_status") == SOURCE_VALID:
+            valid_source_count += 1
+    winner = _consensus_winner(results)
+    consensus_count = 0
+    for result in results:
+        if result.get("source_status") == SOURCE_VALID and result.get("source_winner_id") == winner:
+            consensus_count += 1
+    return (
+        _is_u256(proposal.get("valid_source_count"))
+        and _is_u256(proposal.get("consensus_winner"))
+        and _is_u256(proposal.get("consensus_count"))
+        and proposal.get("valid_source_count") == valid_source_count
+        and proposal.get("consensus_winner") == winner
+        and proposal.get("consensus_count") == consensus_count
+    )
+
+
+def _proposal_financial_winner(proposal: dict) -> int:
+    if not isinstance(proposal, dict):
+        return OUTCOME_NONE
+    winner = proposal.get("consensus_winner", OUTCOME_NONE)
+    count = proposal.get("consensus_count", 0)
+    if _is_u256(winner) and winner < OUTCOME_COUNT and _is_u256(count) and count >= 2:
+        return winner
+    return OUTCOME_NONE
+
+
+def _proposal_source_vote(proposal: dict, source: str) -> int:
+    result = _proposal_source_result(proposal, source)
+    if result is None or result.get("source_status") != SOURCE_VALID:
+        return OUTCOME_NONE
+    winner = result.get("source_winner_id", OUTCOME_NONE)
+    return winner if _is_u256(winner) and winner < OUTCOME_COUNT else OUTCOME_NONE
+
+
+def _common_valid_votes(first: dict, second: dict, winner: int) -> int:
+    count = 0
+    for source in _sources():
+        if _proposal_source_vote(first, source) == winner and _proposal_source_vote(second, source) == winner:
+            count += 1
+    return count
+
+
+def _proposal_has_unavailable(proposal: dict) -> bool:
+    for source in _sources():
+        result = _proposal_source_result(proposal, source)
+        if result is not None and result.get("source_status") == SOURCE_UNAVAILABLE:
+            return True
+    return False
+
+
+def _settlement_proposal(category: u256, start: u256, end: u256) -> dict:
+    def leader_fn():
+        return _collect_sources(category, start, end)
+
+    def validator_fn(leaders_result) -> bool:
+        if not isinstance(leaders_result, gl.vm.Return) or not isinstance(leaders_result.calldata, dict):
+            return False
+        leader_proposal = leaders_result.calldata
+        if not _proposal_valid(leader_proposal, category, start, end):
+            return False
+        validator_proposal = _collect_sources(category, start, end)
+        if not _proposal_valid(validator_proposal, category, start, end):
+            return False
+        leader_winner = _proposal_financial_winner(leader_proposal)
+        validator_winner = _proposal_financial_winner(validator_proposal)
+        if leader_winner != validator_winner:
+            return False
+        if leader_winner != OUTCOME_NONE:
+            return _common_valid_votes(leader_proposal, validator_proposal, leader_winner) >= 2
+        return _proposal_has_unavailable(leader_proposal) == _proposal_has_unavailable(validator_proposal)
+
+    return gl.vm.run_nondet(leader_fn, validator_fn)
 
 
 class Forge(gl.contract.Contract):
@@ -951,10 +1084,11 @@ class Forge(gl.contract.Contract):
             return STATE_INCONCLUSIVE
         category = self.market_category[market_id]
         start = self.market_start_seconds[market_id]
-        results = [_source_consensus(source, category, start, end_seconds) for source in _sources()]
+        proposal = _settlement_proposal(category, start, end_seconds)
+        results = proposal["source_results"]
         for index, source in enumerate(_sources()):
             self.market_source_evidence[self._source_key(market_id, source)] = json.dumps(results[index], separators=(",", ":"), sort_keys=True)
-        winner = _consensus_winner(results)
+        winner = _proposal_financial_winner(proposal)
         if winner == OUTCOME_NONE:
             self.market_state[market_id] = STATE_PENDING
             self.market_winner[market_id] = OUTCOME_NONE

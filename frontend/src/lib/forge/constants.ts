@@ -1,7 +1,7 @@
 import { studioDevnet } from "genlayer-js/chains";
 import type { Address } from "viem";
 
-export const FORGE_CONTRACT_ADDRESS = "0xc93d27132e62467183bB22DF335368C378379C09" as Address;
+export const FORGE_CONTRACT_ADDRESS = "0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15" as Address;
 export const FORGE_CHAIN_ID = studioDevnet.id;
 export const FORGE_CHAIN_ID_HEX = `0x${FORGE_CHAIN_ID.toString(16)}`;
 export const FORGE_RPC_URL = studioDevnet.rpcUrls.default.http[0];
