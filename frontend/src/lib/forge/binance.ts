@@ -1,5 +1,8 @@
 import type { Asset, MarketView } from "./types";
 
+const BINANCE_FUTURES_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines";
+const MAX_KLINES = 60;
+
 interface BinanceKline {
   openTime: number;
   open: string;
@@ -82,6 +85,53 @@ function asResponse(
   return { symbol, interval: "1m", startTime, endTime, klines };
 }
 
+function normalizeBinancePayload(payload: unknown): unknown[] {
+  if (!Array.isArray(payload)) throw new Error("Invalid Binance candle payload.");
+  return payload.map((row) => {
+    if (!Array.isArray(row) || row.length < 7) throw new Error("Invalid Binance candle shape.");
+    return { openTime: row[0], open: row[1], close: row[4] };
+  });
+}
+
+function binanceKlinesUrl(symbol: string, startTime: number, endTime: number): string {
+  const params = new URLSearchParams({
+    symbol,
+    interval: "1m",
+    startTime: String(startTime),
+    endTime: String(endTime),
+    limit: String(MAX_KLINES),
+  });
+  return `${BINANCE_FUTURES_KLINES_URL}?${params.toString()}`;
+}
+
+async function fetchDirectKlines(
+  symbol: string,
+  startTime: number,
+  endTime: number,
+): Promise<BinanceKline[]> {
+  const response = await fetch(binanceKlinesUrl(symbol, startTime, endTime));
+  const bodyText = await response.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(bodyText);
+  } catch {
+    throw new Error("Binance returned malformed JSON.");
+  }
+  if (!response.ok) throw new Error(`Binance returned HTTP ${response.status}.`);
+  return asResponse(
+    {
+      symbol,
+      interval: "1m",
+      startTime,
+      endTime,
+      klines: normalizeBinancePayload(body),
+    },
+    symbol,
+    startTime,
+    endTime,
+  ).klines;
+}
+
 async function fetchKlines(
   symbol: string,
   startTime: number,
@@ -105,6 +155,11 @@ async function fetchKlines(
       typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
         ? body.error
         : "Binance performance data unavailable.";
+    if (response.status === 502 && /HTTP 451\b/.test(message)) {
+      if (import.meta.env.DEV)
+        console.debug("[FORGE BINANCE DIRECT FALLBACK]", { symbol, reason: "upstream_http_451" });
+      return fetchDirectKlines(symbol, startTime, endTime);
+    }
     throw new Error(message);
   }
   return asResponse(body, symbol, startTime, endTime).klines;
