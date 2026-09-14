@@ -130,7 +130,7 @@ same rules for every caller.
 | Field    | Value                                                                                                                                       |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | Live app | [forge-markets.vercel.app](https://forge-markets.vercel.app/)                                                                               |
-| Network  | GenLayer StudioNext / studio-dev                                                                                                            |
+| Network  | GenLayer Studio-dev                                                                                                                         |
 | Chain ID | `61997`                                                                                                                                     |
 | Contract | [`0x5e293d83E1340C4be1D513F4B9a6905e3439cA09`](https://explorer-studio-dev.genlayer.com/address/0x5e293d83E1340C4be1D513F4B9a6905e3439cA09) |
 | RPC      | `https://studio-dev.genlayer.com/api`                                                                                                       |
