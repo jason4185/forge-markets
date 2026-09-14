@@ -7,6 +7,7 @@ import {
   FORGE_NETWORK_NAME,
   FORGE_RPC_URL,
 } from "./constants";
+import { logForgeWriteDebug, logForgeWriteOriginalError } from "./errors";
 
 export const forgeInjectedConnector = injected({ shimDisconnect: false });
 export const wagmiReconnectOnMount = true;
@@ -76,7 +77,9 @@ function parseProviderChainId(value: unknown): number {
   return parsed;
 }
 
-export async function getActiveInjectedProvider(): Promise<ForgeInjectedProvider | undefined> {
+export async function getActiveInjectedProvider(
+  options: { diagnostic?: boolean } = {},
+): Promise<ForgeInjectedProvider | undefined> {
   if (typeof window === "undefined") return undefined;
 
   // Resolve through the same configured wagmi connector used for the connected
@@ -101,12 +104,57 @@ export async function getActiveInjectedProvider(): Promise<ForgeInjectedProvider
         connector.id === persistedConnector?.id,
     ) ??
     wagmiConfig.connectors[0];
-  if (!activeConnector || typeof activeConnector.getProvider !== "function") return undefined;
+  if (options.diagnostic)
+    logForgeWriteDebug("active connector", {
+      activeUid: activeUid ?? "none",
+      connectorId: activeConnector?.id ?? "none",
+      connectorName: activeConnector?.name ?? "none",
+      connectorType: activeConnector?.type ?? "none",
+      providerMethod:
+        typeof activeConnector?.getProvider === "function" ? "getProvider" : "missing",
+    });
+  if (!activeConnector || typeof activeConnector.getProvider !== "function") {
+    if (options.diagnostic)
+      logForgeWriteDebug("provider acquisition result", {
+        providerPresent: false,
+        hasRequest: false,
+        providerType: "none",
+      });
+    return undefined;
+  }
   let connectorProvider: unknown;
   try {
     connectorProvider = await activeConnector.getProvider();
-  } catch {
+  } catch (error) {
+    if (options.diagnostic) {
+      logForgeWriteOriginalError("provider acquisition", error, {
+        connectorId: activeConnector.id,
+        connectorName: activeConnector.name,
+      });
+      logForgeWriteDebug("provider acquisition result", {
+        providerPresent: false,
+        hasRequest: false,
+        providerType: "error",
+      });
+      throw error;
+    }
     connectorProvider = undefined;
+  }
+  if (options.diagnostic) {
+    logForgeWriteDebug("provider acquisition result", {
+      providerPresent: Boolean(connectorProvider),
+      hasRequest: Boolean(
+        connectorProvider &&
+        typeof connectorProvider === "object" &&
+        "request" in connectorProvider &&
+        typeof (connectorProvider as { request?: unknown }).request === "function",
+      ),
+      providerType:
+        connectorProvider && typeof connectorProvider === "object"
+          ? ((connectorProvider as { constructor?: { name?: unknown } }).constructor?.name ??
+            "object")
+          : typeof connectorProvider,
+    });
   }
   if (isInjectedProvider(connectorProvider)) return connectorProvider;
   return undefined;

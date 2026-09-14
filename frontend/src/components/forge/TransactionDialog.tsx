@@ -89,7 +89,7 @@ export function useTransactionDialog() {
       message: undefined,
     }));
   }, []);
-  const fail = useCallback((error: string, hash?: string) => {
+  const fail = useCallback((error: string, hash?: string, technicalDetail?: string) => {
     activeWrite.current = false;
     setState((current) => ({
       ...current,
@@ -97,6 +97,7 @@ export function useTransactionDialog() {
       stage: "ERROR",
       hash: hash ?? current.hash,
       error,
+      technicalDetail,
       message: undefined,
     }));
   }, []);
@@ -181,9 +182,16 @@ export function TransactionDialog({
           </div>
         )}
         {state.stage === "ERROR" && (
-          <p className="rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
-            {copy.message}
-          </p>
+          <>
+            <p className="rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
+              {copy.message}
+            </p>
+            {state.technicalDetail && !state.hash && (
+              <p className="rounded-md border border-border bg-panel-2 px-3 py-2 text-center text-[11px] text-muted-foreground">
+                Technical detail: {state.technicalDetail}
+              </p>
+            )}
+          </>
         )}
         {footer ?? (
           <button

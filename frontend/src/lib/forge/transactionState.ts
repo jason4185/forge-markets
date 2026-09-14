@@ -10,6 +10,7 @@ export interface TransactionDialogState {
   action: TransactionAction;
   hash?: string | undefined;
   error?: string | undefined;
+  technicalDetail?: string | undefined;
   message?: string | undefined;
 }
 

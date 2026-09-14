@@ -29,6 +29,10 @@ export interface ForgeUserError {
   retryable: boolean;
 }
 
+export function logForgeWriteDebug(stage: string, details: Record<string, unknown> = {}) {
+  console.debug(`[FORGE_WRITE_DEBUG] ${stage}`, details);
+}
+
 type ErrorRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is ErrorRecord {
@@ -40,6 +44,49 @@ function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (isRecord(error) && typeof error["message"] === "string") return error["message"];
   return String(error);
+}
+
+function diagnosticErrorDetails(error: unknown): Record<string, unknown> {
+  if (!isRecord(error)) return { message: String(error) };
+  const details: Record<string, unknown> = {
+    name: typeof error["name"] === "string" ? error["name"] : undefined,
+    message: errorMessage(error),
+    code: error["code"],
+    cause: error["cause"] && error["cause"] !== error ? errorMessage(error["cause"]) : undefined,
+  };
+  if (error instanceof Error && error.stack) {
+    details["shortStack"] = error.stack.split("\n").slice(0, 4).join("\n");
+  }
+  return details;
+}
+
+export function logForgeWriteOriginalError(
+  stage: string,
+  error: unknown,
+  details: Record<string, unknown> = {},
+) {
+  console.error("[FORGE_WRITE_DEBUG] ORIGINAL_ERROR", {
+    ...details,
+    stage,
+    ...diagnosticErrorDetails(error),
+  });
+}
+
+export function forgeTechnicalDetail(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 3 && current && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const message = errorMessage(current).replace(/\s+/g, " ").trim();
+    const record = isRecord(current) ? current : undefined;
+    const code = record?.["code"];
+    const suffix =
+      typeof code === "string" || typeof code === "number" ? ` (code ${String(code)})` : "";
+    if (message) parts.push(`${depth === 0 ? "" : "cause: "}${message}${suffix}`);
+    current = record?.["cause"];
+  }
+  return parts.join(" → ").slice(0, 320);
 }
 
 function errorCode(error: unknown): number | string | undefined {

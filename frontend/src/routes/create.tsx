@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { TransactionDialog, useTransactionDialog } from "@/components/forge/TransactionDialog";
 import { forgeInjectedConnector } from "@/lib/forge/walletConfig";
-import { mapForgeError } from "@/lib/forge/errors";
+import { logForgeWriteDebug, mapForgeError } from "@/lib/forge/errors";
 import { FORGE_CHAIN_ID, CATEGORY_ASSETS, type Category } from "@/lib/forge/constants";
 import { formatAsset, formatUtcDate, formatUtcTime } from "@/lib/forge/format";
 import { contractAdapter } from "@/lib/forge/contractAdapter";
@@ -79,6 +79,10 @@ function CreatePage() {
   const wrongNetwork = Boolean(address) && chainId !== FORGE_CHAIN_ID;
 
   const create = async () => {
+    logForgeWriteDebug("create_market click started", {
+      activeAddress: address ?? "none",
+      chainId: chainId ?? "none",
+    });
     if (!address) {
       toast.error("Wallet not connected", { description: "Connect your wallet to continue." });
       return;
@@ -97,6 +101,7 @@ function CreatePage() {
       tx.fail(
         result.error ?? mapForgeError(new Error("CREATE_MARKET_FAILED"), "CREATE_MARKET").message,
         result.hash,
+        result.errorDetail,
       );
       return;
     }

@@ -28,7 +28,14 @@ import {
 } from "./constants";
 import { getActiveInjectedProvider } from "./walletConfig";
 import { formatGen, timestampMsFromSeconds } from "./format";
-import { logForgeError, mapForgeError, type ForgeErrorContext } from "./errors";
+import {
+  forgeTechnicalDetail,
+  logForgeError,
+  logForgeWriteDebug,
+  logForgeWriteOriginalError,
+  mapForgeError,
+  type ForgeErrorContext,
+} from "./errors";
 import type {
   ActivityRecord,
   BettingState,
@@ -49,6 +56,7 @@ export interface ContractWriteResult {
   hash?: string;
   confirmed?: boolean;
   error?: string;
+  errorDetail?: string;
 }
 
 export const TRANSACTION_POLL_INTERVAL_MS = 2_000;
@@ -169,6 +177,11 @@ function debugProvider(provider: EIP1193Provider, functionName: string): EIP1193
           },
         );
       }
+      if (request.method === "eth_sendTransaction")
+        logForgeWriteDebug("eth_sendTransaction boundary reached", {
+          method: functionName,
+          providerMethod: request.method,
+        });
       return provider.request(request as never);
     },
   } as EIP1193Provider;
@@ -824,10 +837,18 @@ async function prepareForgeWrite(
 }> {
   if (!isAddress(account)) throw new Error("Invalid wallet address.");
   if (value < 0n) throw new Error("Invalid transaction value.");
+  logForgeWriteDebug("active address", { method: functionName, address: account });
+  logForgeWriteDebug("chain id", { method: functionName, targetChainId: FORGE_CHAIN_ID });
   let injectedProvider: Awaited<ReturnType<typeof getActiveInjectedProvider>>;
+  logForgeWriteDebug("provider acquisition attempted", { method: functionName });
   try {
-    injectedProvider = await getActiveInjectedProvider();
+    injectedProvider = await getActiveInjectedProvider({ diagnostic: true });
   } catch (error) {
+    logForgeWriteOriginalError("provider acquisition", error, {
+      method: functionName,
+      account,
+      contract: FORGE_CONTRACT_ADDRESS,
+    });
     debugForgeTransaction("[FORGE WRITE 1 PRECHECK]", {
       method: functionName,
       args: args.map(debugTransactionValue),
@@ -838,10 +859,17 @@ async function prepareForgeWrite(
       value: value.toString(),
       error: debugError(error),
     });
-    throw new Error(`PRECHECK_FAILED: ${errorMessage(error)}`);
+    throw new Error(`PRECHECK_FAILED: ${errorMessage(error)}`, { cause: error });
   }
-  if (!injectedProvider)
-    throw new Error("No injected wallet detected. Install or enable an EIP-1193 wallet.");
+  if (!injectedProvider) {
+    const error = new Error("No injected wallet detected. Install or enable an EIP-1193 wallet.");
+    logForgeWriteOriginalError("provider acquisition", error, {
+      method: functionName,
+      account,
+      contract: FORGE_CONTRACT_ADDRESS,
+    });
+    throw error;
+  }
   let chainId: number;
   try {
     const chainIdValue = await injectedProvider.request({ method: "eth_chainId" });
@@ -850,6 +878,11 @@ async function prepareForgeWrite(
         ? Number.parseInt(chainIdValue, /^0x/i.test(chainIdValue) ? 16 : 10)
         : Number(chainIdValue);
   } catch (error) {
+    logForgeWriteOriginalError("wallet chain check", error, {
+      method: functionName,
+      account,
+      contract: FORGE_CONTRACT_ADDRESS,
+    });
     debugForgeTransaction("[FORGE WRITE 1 PRECHECK]", {
       method: functionName,
       args: args.map(debugTransactionValue),
@@ -860,7 +893,7 @@ async function prepareForgeWrite(
       value: value.toString(),
       error: debugError(error),
     });
-    throw new Error(`PRECHECK_FAILED: ${errorMessage(error)}`);
+    throw new Error(`PRECHECK_FAILED: ${errorMessage(error)}`, { cause: error });
   }
   debugForgeTransaction("[FORGE WRITE 1 PRECHECK]", {
     method: functionName,
@@ -870,6 +903,11 @@ async function prepareForgeWrite(
     walletChainId: chainId,
     targetChainId: FORGE_CHAIN_ID,
     value: value.toString(),
+  });
+  logForgeWriteDebug("chain id", {
+    method: functionName,
+    walletChainId: chainId,
+    targetChainId: FORGE_CHAIN_ID,
   });
   if (chainId !== FORGE_CHAIN_ID)
     throw new Error(`Switch your wallet to ${FORGE_NETWORK_NAME} before sending a transaction.`);
@@ -896,6 +934,12 @@ async function prepareForgeWrite(
     account: call.account,
     provider: debugProvider(injectedProvider as EIP1193Provider, functionName),
   });
+  logForgeWriteDebug("GenLayer write client created", {
+    method: functionName,
+    account,
+    chain: forgeChain.name,
+    providerType: providerType(injectedProvider),
+  });
   // The client is already constructed with the official studioDevnet chain,
   // and the provider chain was checked above. The v2 RC's connect() helper
   // additionally bootstraps MetaMask Snaps (wallet_getSnaps/requestSnaps),
@@ -921,6 +965,7 @@ async function prepareForgeWrite(
       account,
     },
   );
+  logForgeWriteDebug("fee preparation started", { method: functionName, account });
   let feeEstimate: ForgeFeeEstimate;
   try {
     // Policy estimation is one bounded Studio RPC path for ordinary writes.
@@ -930,6 +975,11 @@ async function prepareForgeWrite(
     // so a user can retry intentionally instead of multiplying RPC load.
     feeEstimate = await estimateForgeWriteFees(client, functionName, call);
   } catch (error) {
+    logForgeWriteOriginalError("fee preparation", error, {
+      method: functionName,
+      account,
+      contract: FORGE_CONTRACT_ADDRESS,
+    });
     debugForgeTransaction(
       functionName === "settle_market"
         ? "[FORGE SETTLE FEE ERROR]"
@@ -945,8 +995,13 @@ async function prepareForgeWrite(
         error: debugError(error),
       },
     );
-    throw new Error(`FEE_ESTIMATE_FAILED: ${errorMessage(error)}`);
+    throw new Error(`FEE_ESTIMATE_FAILED: ${errorMessage(error)}`, { cause: error });
   }
+  logForgeWriteDebug("fee preparation succeeded", {
+    method: functionName,
+    account,
+    feeValue: feeEstimate.feeValue.toString(),
+  });
   debugForgeTransaction(
     functionName === "settle_market" ? "[FORGE SETTLE FEE OK]" : "[FORGE WRITE 4 FEE_ESTIMATE_OK]",
     {
@@ -971,7 +1026,18 @@ async function writeContract(
   value: bigint,
   onStage?: TransactionStageHandler,
 ) {
-  const { client, call, feeEstimate } = await prepareForgeWrite(account, functionName, args, value);
+  let prepared: Awaited<ReturnType<typeof prepareForgeWrite>>;
+  try {
+    prepared = await prepareForgeWrite(account, functionName, args, value);
+  } catch (error) {
+    logForgeWriteOriginalError("pre-submit preparation", error, {
+      method: functionName,
+      account,
+      contract: FORGE_CONTRACT_ADDRESS,
+    });
+    throw error;
+  }
+  const { client, call, feeEstimate } = prepared;
   debugForgeTransaction(
     functionName === "settle_market"
       ? "[FORGE SETTLE SUBMIT START]"
@@ -986,6 +1052,11 @@ async function writeContract(
   );
   onStage?.("AWAITING_SIGNATURE");
   let hash: unknown;
+  logForgeWriteDebug("writeContract invoked", {
+    method: functionName,
+    contract: FORGE_CONTRACT_ADDRESS,
+    account,
+  });
   try {
     hash = await client.writeContract({
       ...call,
@@ -998,6 +1069,11 @@ async function writeContract(
       },
     } as never);
   } catch (error) {
+    logForgeWriteOriginalError("writeContract before hash", error, {
+      method: functionName,
+      contract: FORGE_CONTRACT_ADDRESS,
+      account,
+    });
     debugForgeTransaction(
       isUserRejected(error) ? "[FORGE WALLET_REJECTED]" : "[FORGE WRITE_SUBMISSION_FAILED]",
       {
@@ -1006,8 +1082,12 @@ async function writeContract(
         error: debugError(error),
       },
     );
-    throw new Error(`WRITE_SUBMISSION_FAILED: ${errorMessage(error)}`);
+    throw new Error(`WRITE_SUBMISSION_FAILED: ${errorMessage(error)}`, { cause: error });
   }
+  logForgeWriteDebug("transaction hash returned", {
+    method: functionName,
+    hash: String(hash),
+  });
   debugForgeTransaction(
     functionName === "settle_market" ? "[FORGE SETTLE SUBMITTED]" : "[FORGE WRITE 7 SUBMITTED]",
     {
@@ -1063,6 +1143,7 @@ function writeFailure(error: unknown, context: ForgeErrorContext): ContractWrite
     ok: false,
     ...(hash ? { hash } : {}),
     error: contractError(error, context),
+    errorDetail: forgeTechnicalDetail(error),
   };
 }
 
