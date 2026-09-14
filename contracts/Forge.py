@@ -24,7 +24,7 @@ OUTCOME_GAS = 2
 OUTCOME_COUNT = 3
 OUTCOME_NONE = 3
 
-SOURCE_BINANCE = "BINANCE"
+SOURCE_HYPERLIQUID = "HYPERLIQUID"
 SOURCE_GATE = "GATE"
 SOURCE_BITGET = "BITGET"
 
@@ -110,21 +110,25 @@ def _outcome_name(category, outcome) -> str:
 
 
 def _symbol(source: str, category: u256, outcome: u256) -> str:
-    if source != SOURCE_BINANCE and source != SOURCE_GATE and source != SOURCE_BITGET:
+    if source != SOURCE_HYPERLIQUID and source != SOURCE_GATE and source != SOURCE_BITGET:
         raise gl.vm.UserError("invalid source")
     category_id = _category_id(category)
     outcome_id = _outcome_id(category_id, outcome)
+    if source == SOURCE_HYPERLIQUID:
+        if category_id == CATEGORY_METALS:
+            return ("xyz:GOLD", "xyz:SILVER", "xyz:COPPER")[outcome_id]
+        return ("xyz:CL", "xyz:BRENTOIL", "xyz:NATGAS")[outcome_id]
     if category_id == CATEGORY_METALS:
-        if source == SOURCE_BINANCE or source == SOURCE_BITGET:
+        if source == SOURCE_BITGET:
             return ("XAUUSDT", "XAGUSDT", "COPPERUSDT")[outcome_id]
         return ("XAU_USDT", "XAG_USDT", "XCU_USDT")[outcome_id]
-    if source == SOURCE_BINANCE or source == SOURCE_BITGET:
+    if source == SOURCE_BITGET:
         return ("CLUSDT", "BZUSDT", "NATGASUSDT")[outcome_id]
     return ("CL_USDT", "BZ_USDT", "NG_USDT")[outcome_id]
 
 
 def _sources() -> list[str]:
-    return [SOURCE_BINANCE, SOURCE_GATE, SOURCE_BITGET]
+    return [SOURCE_HYPERLIQUID, SOURCE_GATE, SOURCE_BITGET]
 
 
 def _is_digits(value: str) -> bool:
@@ -226,18 +230,14 @@ def _compare_return(left_open: int, left_close: int, right_open: int, right_clos
     return 0
 
 
-def _request_json(url: str):
-    try:
-        response = gl.nondet.web.get(url, headers={"Accept": "application/json"})
-    except Exception:
-        return SOURCE_UNAVAILABLE, None
+def _response_json(response):
     try:
         status = int(response.status)
+        if status >= 500 or status in (408, 425, 429):
+            return SOURCE_UNAVAILABLE, None
         body = response.body
         if not isinstance(body, bytes) or len(body) == 0 or len(body) > MAX_RESPONSE_BYTES:
             return SOURCE_INVALID, None
-        if status >= 500 or status in (408, 425, 429):
-            return SOURCE_UNAVAILABLE, None
         if status != 200:
             return SOURCE_INVALID, None
         return "OK", json.loads(body.decode("utf-8"))
@@ -245,16 +245,35 @@ def _request_json(url: str):
         return SOURCE_INVALID, None
 
 
+def _request_json(url: str):
+    try:
+        response = gl.nondet.web.get(url, headers={"Accept": "application/json"})
+    except Exception:
+        return SOURCE_UNAVAILABLE, None
+    return _response_json(response)
+
+
+def _request_json_post(url: str, payload: dict):
+    try:
+        response = gl.nondet.web.request(
+            url,
+            method="POST",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            body=json.dumps(payload, separators=(",", ":")),
+        )
+    except Exception:
+        return SOURCE_UNAVAILABLE, None
+    return _response_json(response)
+
+
 def _row_from_payload(source: str, payload, expected_start: int, expected_end: int):
     if not isinstance(payload, list) or len(payload) != 1:
         return None
     row = payload[0]
-    expected_length = 12 if source == SOURCE_BINANCE else 7
+    expected_length = 7
     if not isinstance(row, list) or len(row) != expected_length:
         return None
     if _parse_integer(row[0]) != expected_start:
-        return None
-    if source == SOURCE_BINANCE and _parse_integer(row[6]) != expected_end - 1:
         return None
     opening = _parse_price(row[1])
     high = _parse_price(row[2])
@@ -263,6 +282,23 @@ def _row_from_payload(source: str, payload, expected_start: int, expected_end: i
     if source == SOURCE_GATE:
         opening = _parse_price(row[5])
         closing = _parse_price(row[2])
+    if opening is None or high is None or low is None or closing is None:
+        return None
+    return expected_start, opening, closing
+
+
+def _hyperliquid_candle(payload, expected_start: int, expected_end: int, symbol: str):
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+        return None
+    row = payload[0]
+    if row.get("s") != symbol or row.get("i") != "1h":
+        return None
+    if _parse_integer(row.get("t")) != expected_start or _parse_integer(row.get("T")) != expected_end:
+        return None
+    opening = _parse_price(row.get("o"))
+    high = _parse_price(row.get("h"))
+    low = _parse_price(row.get("l"))
+    closing = _parse_price(row.get("c"))
     if opening is None or high is None or low is None or closing is None:
         return None
     return expected_start, opening, closing
@@ -303,12 +339,22 @@ def _fetch_candle(source: str, category: u256, outcome: u256, start_seconds: u25
     symbol = _symbol(source, category, outcome)
     start_ms = _mul_u256(start_seconds, 1000)
     end_ms = _mul_u256(end_seconds, 1000)
-    if source == SOURCE_BINANCE:
-        url = "https://fapi.binance.com/fapi/v1/klines?symbol=" + symbol + "&interval=1h&startTime=" + str(start_ms) + "&endTime=" + str(end_ms) + "&limit=1"
-        request_status, payload = _request_json(url)
+    if source == SOURCE_HYPERLIQUID:
+        request_status, payload = _request_json_post(
+            "https://api.hyperliquid.xyz/info",
+            {
+                "type": "candleSnapshot",
+                "req": {
+                    "coin": symbol,
+                    "interval": "1h",
+                    "startTime": start_ms,
+                    "endTime": end_ms - 1,
+                },
+            },
+        )
         if request_status != "OK":
             return request_status, None
-        row = _row_from_payload(SOURCE_BINANCE, payload, start_ms, end_ms)
+        row = _hyperliquid_candle(payload, start_ms, end_ms - 1, symbol)
         return ("OK", row) if row is not None else (SOURCE_INVALID, None)
     if source == SOURCE_BITGET:
         url = "https://api.bitget.com/api/v3/market/candles?category=USDT-FUTURES&symbol=" + symbol + "&interval=1H&startTime=" + str(start_ms) + "&endTime=" + str(end_ms - 1) + "&limit=1"
@@ -697,7 +743,7 @@ class Forge(gl.contract.Contract):
             "id": market_id,
             "category": _category_name(category),
             "assets": _outcome_names(category),
-            "symbols": [_symbol(SOURCE_BINANCE, category, i) for i in range(OUTCOME_COUNT)],
+            "symbols": [_symbol(SOURCE_HYPERLIQUID, category, i) for i in range(OUTCOME_COUNT)],
             "symbols_by_source": {source: [_symbol(source, category, i) for i in range(OUTCOME_COUNT)] for source in _sources()},
             "market_start": self.market_start_seconds[market_id],
             "market_end": self.market_end_seconds[market_id],
