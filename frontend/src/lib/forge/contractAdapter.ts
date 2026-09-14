@@ -197,6 +197,16 @@ type ForgeWriteCall = {
 };
 type ForgeFeeEstimate = Awaited<ReturnType<ForgeWriteClient["estimateTransactionFees"]>>;
 
+function sdkWriteCall(call: ForgeWriteCall) {
+  return {
+    ...call,
+    // GenLayerJS uses the client-level address string to select the injected
+    // provider, but its write/fee internals read the per-call account.address.
+    // Keep those two representations at their respective boundaries.
+    account: { address: call.account, type: "json-rpc" as const },
+  };
+}
+
 const WRITE_METHODS_REQUIRING_MESSAGE_DISCOVERY = new Set(["claim", "claim_refund"]);
 
 export function usesConcreteWriteSimulation(functionName: string): boolean {
@@ -209,9 +219,7 @@ export async function estimateForgeWriteFees(
   call: ForgeWriteCall,
 ): Promise<ForgeFeeEstimate> {
   if (usesConcreteWriteSimulation(functionName))
-    // The SDK runtime accepts an address here to activate its injected-wallet
-    // transport, although the RC type currently narrows this option to Account.
-    return client.estimateTransactionFeesForWrite(call as never);
+    return client.estimateTransactionFeesForWrite(sdkWriteCall(call) as never);
   return client.estimateTransactionFees();
 }
 
@@ -835,6 +843,7 @@ async function prepareForgeWrite(
   call: ForgeWriteCall;
   feeEstimate: ForgeFeeEstimate;
 }> {
+  if (!account) throw new Error("WALLET_ACCOUNT_UNAVAILABLE: Wallet account unavailable.");
   if (!isAddress(account)) throw new Error("Invalid wallet address.");
   if (value < 0n) throw new Error("Invalid transaction value.");
   logForgeWriteDebug("active address", { method: functionName, address: account });
@@ -938,6 +947,8 @@ async function prepareForgeWrite(
     method: functionName,
     account,
     chain: forgeChain.name,
+    contract: call.address,
+    provider_has_request: typeof injectedProvider.request === "function",
     providerType: providerType(injectedProvider),
   });
   // The client is already constructed with the official studioDevnet chain,
@@ -1058,8 +1069,9 @@ async function writeContract(
     account,
   });
   try {
+    const sdkCall = sdkWriteCall(call);
     hash = await client.writeContract({
-      ...call,
+      ...sdkCall,
       fees: {
         distribution: feeEstimate.distribution,
         feeValue: feeEstimate.feeValue,

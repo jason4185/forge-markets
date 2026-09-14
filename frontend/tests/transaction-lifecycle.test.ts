@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createClient } from "genlayer-js";
 import {
+  contractAdapter,
   estimateForgeWriteFees,
   usesConcreteWriteSimulation,
   waitForAcceptedExecution,
@@ -155,18 +156,26 @@ describe("Forge transaction lifecycle", () => {
     let policyCalls = 0;
     let simulationCalls = 0;
     const estimate = { feeValue: 1n, distribution: {} } as never;
+    const activeAccount = "0x0000000000000000000000000000000000000001";
     const client = {
       estimateTransactionFees: async () => {
         policyCalls += 1;
         return estimate;
       },
-      estimateTransactionFeesForWrite: async () => {
+      estimateTransactionFeesForWrite: async (call: { account?: unknown }) => {
         simulationCalls += 1;
+        expect(call.account).toEqual({ address: activeAccount, type: "json-rpc" });
         return estimate;
       },
     } as never;
 
-    await estimateForgeWriteFees(client, "claim_refund", {} as never);
+    await estimateForgeWriteFees(client, "claim_refund", {
+      account: activeAccount,
+      address: activeAccount,
+      functionName: "claim_refund",
+      args: [],
+      value: 0n,
+    } as never);
 
     expect(policyCalls).toBe(0);
     expect(simulationCalls).toBe(1);
@@ -216,6 +225,84 @@ describe("Forge transaction lifecycle", () => {
       expect(rpcMethods).not.toContain("eth_sendTransaction");
     } finally {
       globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("keeps the client transport address string while giving SDK writes an account object", async () => {
+    const activeAccount = "0x0000000000000000000000000000000000000001" as const;
+    const walletMethods: string[] = [];
+    const rpcMethods: string[] = [];
+    const walletProvider = {
+      request: async ({ method }: { method: string }) => {
+        walletMethods.push(method);
+        if (method === "eth_sendTransaction") throw new Error("wallet boundary reached");
+        throw new Error(`unexpected wallet method: ${method}`);
+      },
+    };
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { method?: string };
+      rpcMethods.push(body.method ?? "unknown");
+      const result =
+        body.method === "eth_getTransactionCount"
+          ? "0x0"
+          : body.method === "eth_estimateGas"
+            ? "0x5208"
+            : body.method === "eth_gasPrice"
+              ? "0x1"
+              : null;
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const client = createClient({
+        chain: forgeChain as never,
+        account: activeAccount,
+        provider: walletProvider as never,
+      });
+
+      await expect(
+        client.writeContract({
+          account: { address: activeAccount, type: "json-rpc" },
+          address: activeAccount,
+          functionName: "create_market",
+          args: ["METALS", 1n],
+          value: 0n,
+          fees: { distribution: {}, feeValue: 0n },
+        } as never),
+      ).rejects.toThrow("wallet boundary reached");
+
+      expect(walletMethods).toEqual(["eth_sendTransaction"]);
+      expect(rpcMethods).not.toContain("eth_sendTransaction");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("rejects a missing wallet account before provider submission", async () => {
+    const providerMethods: string[] = [];
+    const previousWindow = globalThis.window;
+    globalThis.window = {
+      ethereum: {
+        request: async ({ method }: { method: string }) => {
+          providerMethods.push(method);
+          return method === "eth_chainId" ? "0xf22d" : undefined;
+        },
+      },
+    } as never;
+
+    try {
+      const result = await contractAdapter.createMarket("METALS", 1n, undefined as never);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Wallet account unavailable");
+      expect(result.errorDetail).toContain("WALLET_ACCOUNT_UNAVAILABLE");
+      expect(providerMethods).toEqual([]);
+    } finally {
+      if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window");
+      else globalThis.window = previousWindow;
     }
   });
 });

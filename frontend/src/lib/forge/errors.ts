@@ -214,6 +214,13 @@ export function mapForgeError(
       { action: "connect" },
     );
 
+  if (/wallet_account_unavailable|wallet account unavailable/.test(text))
+    return result(
+      "Wallet account unavailable",
+      "Wallet account unavailable. Reconnect your wallet before sending a transaction.",
+      { action: "connect", retryable: true },
+    );
+
   if (isRejected) {
     if (context === "WALLET_CONNECT")
       return result(
