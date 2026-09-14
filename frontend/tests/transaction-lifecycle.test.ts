@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createClient } from "genlayer-js";
 import {
   estimateForgeWriteFees,
   usesConcreteWriteSimulation,
@@ -7,6 +8,7 @@ import {
 import { mapForgeError } from "../src/lib/forge/errors";
 import { reconcileAcceptedWrite } from "../src/lib/forge/retry";
 import { transactionStageCopy } from "../src/lib/forge/transactionState";
+import { forgeChain } from "../src/lib/forge/constants";
 
 function receipt(statusName: string, txExecutionResultName = "FINISHED_WITH_RETURN") {
   return { statusName, txExecutionResultName } as never;
@@ -169,5 +171,51 @@ describe("Forge transaction lifecycle", () => {
     expect(policyCalls).toBe(0);
     expect(simulationCalls).toBe(1);
     expect(usesConcreteWriteSimulation("claim_refund")).toBe(true);
+  });
+
+  test("routes eth_sendTransaction to the wallet provider, not Studio RPC", async () => {
+    const activeAccount = "0x0000000000000000000000000000000000000001" as const;
+    const walletMethods: string[] = [];
+    const rpcMethods: string[] = [];
+    const walletProvider = {
+      request: async ({ method, params }: { method: string; params?: unknown[] }) => {
+        walletMethods.push(method);
+        expect((params?.[0] as { from?: string }).from?.toLowerCase()).toBe(activeAccount);
+        return "0xwallet-hash";
+      },
+    };
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { method?: string };
+      rpcMethods.push(body.method ?? "unknown");
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const client = createClient({
+        chain: forgeChain as never,
+        account: activeAccount,
+        provider: walletProvider as never,
+      });
+      const request = client.request as unknown as (request: {
+        method: string;
+        params?: unknown[];
+      }) => Promise<unknown>;
+
+      await expect(
+        request({
+          method: "eth_sendTransaction",
+          params: [{ from: activeAccount, to: activeAccount, data: "0x" }],
+        }),
+      ).resolves.toBe("0xwallet-hash");
+
+      expect(walletMethods).toEqual(["eth_sendTransaction"]);
+      expect(rpcMethods).not.toContain("eth_sendTransaction");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });

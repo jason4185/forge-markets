@@ -175,9 +175,8 @@ function debugProvider(provider: EIP1193Provider, functionName: string): EIP1193
 }
 
 type ForgeWriteClient = ReturnType<typeof createClient>;
-type ForgeJsonRpcAccount = { address: Address; type: "json-rpc" };
 type ForgeWriteCall = {
-  account: ForgeJsonRpcAccount;
+  account: Address;
   address: Address;
   functionName: string;
   args: CalldataEncodable[];
@@ -197,7 +196,9 @@ export async function estimateForgeWriteFees(
   call: ForgeWriteCall,
 ): Promise<ForgeFeeEstimate> {
   if (usesConcreteWriteSimulation(functionName))
-    return client.estimateTransactionFeesForWrite(call);
+    // The SDK runtime accepts an address here to activate its injected-wallet
+    // transport, although the RC type currently narrows this option to Account.
+    return client.estimateTransactionFeesForWrite(call as never);
   return client.estimateTransactionFees();
 }
 
@@ -871,7 +872,10 @@ async function prepareForgeWrite(
   if (chainId !== FORGE_CHAIN_ID)
     throw new Error(`Switch your wallet to ${FORGE_NETWORK_NAME} before sending a transaction.`);
   const call: ForgeWriteCall = {
-    account: { address: account as Address, type: "json-rpc" },
+    // GenLayerJS uses an address account to route wallet-only RPC methods
+    // through the configured EIP-1193 provider. An account object is treated
+    // as locally signed and would send eth_sendTransaction to Studio RPC.
+    account: account as Address,
     address: FORGE_CONTRACT_ADDRESS,
     functionName,
     args: args as CalldataEncodable[],
@@ -990,7 +994,7 @@ async function writeContract(
           ? { messageAllocations: feeEstimate.messageAllocations }
           : {}),
       },
-    });
+    } as never);
   } catch (error) {
     debugForgeTransaction(
       isUserRejected(error) ? "[FORGE WALLET_REJECTED]" : "[FORGE WRITE_SUBMISSION_FAILED]",
