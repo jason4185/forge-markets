@@ -566,6 +566,8 @@ export function useRefreshForge() {
           : kind === "settle"
             ? [
                 ["forge", "market", marketId],
+                ["forge", "markets"],
+                ["forge", "open-markets"],
                 ["forge", "evidence", marketId],
                 ["forge", "betting-state", marketId],
                 ["forge", "my-position", marketId],
