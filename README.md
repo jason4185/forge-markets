@@ -40,9 +40,9 @@ Each market:
 Forge has two fixed categories. Every market compares the three commodities in
 its category.
 
-| Category | Commodities |
-| --- | --- |
-| `METALS` | GOLD · SILVER · COPPER |
+| Category | Commodities                                                                         |
+| -------- | ----------------------------------------------------------------------------------- |
+| `METALS` | GOLD · SILVER · COPPER                                                              |
 | `ENERGY` | WTI Crude (`WTI_CRUDE`) · Brent Crude (`BRENT_CRUDE`) · Natural Gas (`NATURAL_GAS`) |
 
 The question is always: which of the three commodities will have the highest
@@ -63,29 +63,20 @@ source result as an independent vote; the exchanges provide evidence, while
 Forge and GenLayer consensus determine whether settlement is proven.
 
 A source result is classified as `VALID`, `TIE`, `UNAVAILABLE`, or `INVALID`.
-`VALID` casts its winner vote; `TIE`, `UNAVAILABLE`, and `INVALID` cast no vote.
-`UNAVAILABLE` is a transient result that can be retried, while `INVALID` means
-the source responded but its evidence failed deterministic validation.
-Settlement requires `2 of 3` matching `VALID` source winners.
-Each source calculation allows up to three attempts, but only `UNAVAILABLE`
-results are retried; `TIE` and `INVALID` results stop that source calculation.
-
-Forge evaluates the complete source proposal through GenLayer consensus. The
-leader collects all three source results, and validators independently refetch
-and validate all three. A positive result must prove the same financial winner
-and include at least two matching source/winner witnesses in both executions;
-a transient difference in the third source does not invalidate those common
-witnesses.
+Only `VALID` results cast a winner vote. `TIE`, `UNAVAILABLE`, and `INVALID`
+results cast no vote. Settlement requires `2 of 3` matching `VALID` source
+winners, verified through GenLayer consensus.
 
 Returns are compared by highest percentage return, so all-negative returns are
 valid and the least-negative commodity can win. An exact highest-return tie
 produces `TIE` and casts no winner vote.
 
 The market lasts one hour. Settlement becomes available after the performance
-hour ends and can be retried for a further 30 minutes. If no 2-of-3 result is
-reached during that retry window, a `settle_market` call at or after the
-deadline changes the market to `INCONCLUSIVE` without requiring another source
-fetch.
+hour ends and can be retried for a further 30 minutes. A successful
+`settle_market` execution may leave the market `SETTLEMENT_PENDING` while
+consensus is still pending. If no 2-of-3 result is reached during the retry
+window, a settlement call at or after the deadline changes the market to
+`INCONCLUSIVE` without another source fetch.
 
 ```mermaid
 flowchart LR
@@ -136,12 +127,13 @@ same rules for every caller.
 
 ## Deployment
 
-| Field | Value |
-| --- | --- |
-| Network | GenLayer StudioNext / studio-dev |
-| Chain ID | `61997` |
+| Field    | Value                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live app | [forge-markets.vercel.app](https://forge-markets.vercel.app/)                                                                               |
+| Network  | GenLayer StudioNext / studio-dev                                                                                                            |
+| Chain ID | `61997`                                                                                                                                     |
 | Contract | [`0x5e293d83E1340C4be1D513F4B9a6905e3439cA09`](https://explorer-studio-dev.genlayer.com/address/0x5e293d83E1340C4be1D513F4B9a6905e3439cA09) |
-| RPC | `https://studio-dev.genlayer.com/api` |
+| RPC      | `https://studio-dev.genlayer.com/api`                                                                                                       |
 
 ## Contract interface
 
@@ -196,6 +188,13 @@ through `genlayer-js`. Current user-facing areas are:
 - Notification bell in the shared header
 
 Wallet-specific reads and writes use the connected injected browser wallet.
+Forge owns wallet state through the direct injected EIP-1193 provider: it reads
+`eth_accounts` on load, requests `eth_requestAccounts` on connect, and listens
+for `accountsChanged` and `chainChanged`. The public Studio RPC handles reads,
+fee policy, and transaction status; the active injected provider handles wallet
+signing and `eth_sendTransaction`. Forge uses `studioDevnet` and passes the
+connected address string to the provider-backed GenLayer write client.
+
 The market detail page also shows source evidence and pool composition. Its live
 performance chart uses public Binance 1-minute market data with a separate
 chart-only symbol map; it is informational only and is not connected to settlement.
@@ -227,8 +226,6 @@ forge/
 ├── tests/
 │   ├── direct/
 │   └── integration/
-├── docs/
-├── artifacts/
 ├── gltest.config.yaml
 ├── requirements.txt
 └── README.md
