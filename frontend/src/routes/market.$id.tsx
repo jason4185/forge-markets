@@ -90,16 +90,9 @@ function MarketDetail() {
   const bettingState = useForgeBettingState(id, address);
   const market = marketQuery.data;
   const evidenceEnabled = Boolean(market && market.contractState === "SETTLED");
-  const binanceEvidence = useForgeSourceEvidence(
+  const hyperliquidEvidence = useForgeSourceEvidence(
     id,
-    "BINANCE",
-    evidenceEnabled,
-    now,
-    market ?? undefined,
-  );
-  const bitgetEvidence = useForgeSourceEvidence(
-    id,
-    "BITGET",
+    "HYPERLIQUID",
     evidenceEnabled,
     now,
     market ?? undefined,
@@ -111,7 +104,14 @@ function MarketDetail() {
     now,
     market ?? undefined,
   );
-  const evidenceQueries = [binanceEvidence, bitgetEvidence, gateEvidence];
+  const bitgetEvidence = useForgeSourceEvidence(
+    id,
+    "BITGET",
+    evidenceEnabled,
+    now,
+    market ?? undefined,
+  );
+  const evidenceQueries = [hyperliquidEvidence, gateEvidence, bitgetEvidence];
 
   if (marketQuery.isLoading) return <PageState message="Loading Forge market…" />;
   if (marketQuery.isError)
@@ -355,8 +355,8 @@ function PerformanceCard({
         </TabsContent>
       </Tabs>
       <p className="mt-5 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
-        Settlement uses independent Binance, Gate and Bitget evidence through the Forge contract.
-        This chart is informational only.
+        Settlement uses independent Hyperliquid, Gate and Bitget evidence through the Forge
+        contract. This chart is informational only.
       </p>
     </section>
   );
@@ -551,7 +551,7 @@ const RULES = [
   "Minimum stake 1 GEN; maximum cumulative stake 50 GEN per wallet per market.",
   "One commodity per wallet per market. Same-side top-ups allowed before close; switching sides is not.",
   "0% protocol fee.",
-  "Settlement uses Binance, Bitget and Gate — each source independently ranks the three commodities using its own exact 1h open/close return. Returns are never averaged across exchanges.",
+  "Settlement uses Hyperliquid, Gate and Bitget — each source independently ranks the three commodities using its own exact 1h open/close return. Returns are never averaged across sources.",
   "2-of-3 matching VALID source winners settle the market. A TIE, UNAVAILABLE or INVALID source casts no vote.",
   "30-minute retry window after the market ends.",
   "If no 2-of-3 by the deadline: INCONCLUSIVE and users self-claim original-stake refunds.",

@@ -320,10 +320,12 @@ function pageArgs(offset: number, limit: number): [bigint, bigint] {
 
 function expectedSymbols(category: Category, source: Source): string[] {
   if (category === "METALS") {
+    if (source === "HYPERLIQUID") return ["xyz:GOLD", "xyz:SILVER", "xyz:COPPER"];
     return source === "GATE"
       ? ["XAU_USDT", "XAG_USDT", "XCU_USDT"]
       : ["XAUUSDT", "XAGUSDT", "COPPERUSDT"];
   }
+  if (source === "HYPERLIQUID") return ["xyz:CL", "xyz:BRENTOIL", "xyz:NATGAS"];
   return source === "GATE" ? ["CL_USDT", "BZ_USDT", "NG_USDT"] : ["CLUSDT", "BZUSDT", "NATGASUSDT"];
 }
 
@@ -364,7 +366,7 @@ function normalizeMarket(raw: unknown, nowMs: number): MarketView {
   const rawSymbolsBySource = asMap(data["symbols_by_source"]);
   for (const source of SOURCES)
     symbolsBySource[source] = normalizeSymbols(rawSymbolsBySource[source], category, source);
-  const symbols = normalizeSymbols(data["symbols"], category, "BINANCE");
+  const symbols = normalizeSymbols(data["symbols"], category, SOURCES[0]);
   const startSeconds = asTimestampSeconds(data["market_start"]);
   const endSeconds = asTimestampSeconds(data["market_end"]);
   const deadlineSeconds = asTimestampSeconds(data["settlement_deadline"]);

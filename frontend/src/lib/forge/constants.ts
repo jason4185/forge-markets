@@ -1,7 +1,7 @@
 import { studioDevnet } from "genlayer-js/chains";
 import type { Address } from "viem";
 
-export const FORGE_CONTRACT_ADDRESS = "0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15" as Address;
+export const FORGE_CONTRACT_ADDRESS = "0x5e293d83E1340C4be1D513F4B9a6905e3439cA09" as Address;
 export const FORGE_CHAIN_ID = studioDevnet.id;
 export const FORGE_CHAIN_ID_HEX = `0x${FORGE_CHAIN_ID.toString(16)}`;
 export const FORGE_RPC_URL = studioDevnet.rpcUrls.default.http[0];
@@ -35,13 +35,13 @@ export const ASSET_LABEL: Record<string, string> = {
   NATURAL_GAS: "Natural Gas",
 };
 
-export const SOURCES = ["BINANCE", "BITGET", "GATE"] as const;
+export const SOURCES = ["HYPERLIQUID", "GATE", "BITGET"] as const;
 export type Source = (typeof SOURCES)[number];
 
 export const SOURCE_LABEL: Record<Source, string> = {
-  BINANCE: "Binance",
-  BITGET: "Bitget",
+  HYPERLIQUID: "Hyperliquid",
   GATE: "Gate",
+  BITGET: "Bitget",
 };
 
 export const MARKET_STATES = ["OPEN", "SETTLEMENT_PENDING", "SETTLED", "INCONCLUSIVE"] as const;

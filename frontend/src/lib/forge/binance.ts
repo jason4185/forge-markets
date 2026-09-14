@@ -3,6 +3,22 @@ import type { Asset, MarketView } from "./types";
 const BINANCE_FUTURES_KLINES_URL = "https://fapi.binance.com/fapi/v1/klines";
 const MAX_KLINES = 60;
 
+/** Informational chart symbols; settlement symbols come from the Forge contract. */
+export const BINANCE_CHART_SYMBOLS: Record<Asset, string> = {
+  GOLD: "XAUUSDT",
+  SILVER: "XAGUSDT",
+  COPPER: "COPPERUSDT",
+  WTI_CRUDE: "CLUSDT",
+  BRENT_CRUDE: "BZUSDT",
+  NATURAL_GAS: "NATGASUSDT",
+};
+
+export function binanceChartSymbolForAsset(asset: Asset): string {
+  const symbol = BINANCE_CHART_SYMBOLS[asset];
+  if (!symbol) throw new Error("Unsupported Forge chart asset.");
+  return symbol;
+}
+
 interface BinanceKline {
   openTime: number;
   open: string;
@@ -169,7 +185,7 @@ export async function fetchBinancePerformance(
   market: MarketView,
   endTime: number,
 ): Promise<BinancePerformance> {
-  const symbols = market.symbolsBySource.BINANCE;
+  const symbols = market.assets.map(binanceChartSymbolForAsset);
   if (symbols.length !== market.assets.length || market.assets.length !== 3)
     throw new Error("Contract market has an invalid Binance symbol mapping.");
 

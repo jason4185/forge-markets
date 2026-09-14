@@ -10,7 +10,7 @@ import {
   switchToStudioNext,
 } from "./walletConfig";
 import { queryRetryDelay, shouldRetryRead } from "./retry";
-import { fetchBinancePerformance } from "./binance";
+import { binanceChartSymbolForAsset, fetchBinancePerformance } from "./binance";
 import type { Category, Source } from "./constants";
 import type { MarketView } from "./types";
 
@@ -212,7 +212,7 @@ export function useForgeBinancePerformance(market: MarketView | undefined, nowMs
       "forge",
       "binance-performance",
       market?.id ?? "none",
-      ...(market?.symbolsBySource.BINANCE ?? []),
+      ...(market?.assets.map(binanceChartSymbolForAsset) ?? []),
       market?.startMs ?? 0,
       market?.endMs ?? 0,
     ],

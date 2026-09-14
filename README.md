@@ -50,7 +50,7 @@ percentage return during this exact 1-hour UTC window?
 
 ## Settlement
 
-Forge uses Binance USD-M Futures, Gate, and Bitget as independent sources. Each
+Forge uses Hyperliquid, Gate, and Bitget as independent settlement sources. Each
 source uses its own open and close values for the same 1-hour candle and calculates:
 
 ```text
@@ -89,7 +89,7 @@ fetch.
 
 ```mermaid
 flowchart LR
-    B[Binance winner] --> C{2-of-3 match?}
+    H[Hyperliquid winner] --> C{2-of-3 match?}
     G[Gate winner] --> C
     T[Bitget winner] --> C
 
@@ -101,7 +101,7 @@ flowchart LR
 Example:
 
 ```text
-Binance → GOLD
+Hyperliquid → GOLD
 Gate → GOLD
 Bitget → SILVER
 ```
@@ -140,7 +140,7 @@ same rules for every caller.
 | --- | --- |
 | Network | GenLayer StudioNext / studio-dev |
 | Chain ID | `61997` |
-| Contract | [`0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15`](https://explorer-studio-dev.genlayer.com/address/0xcfA2625BC9bC6d1D34D4865e2f790087AE00fD15) |
+| Contract | [`0x5e293d83E1340C4be1D513F4B9a6905e3439cA09`](https://explorer-studio-dev.genlayer.com/address/0x5e293d83E1340C4be1D513F4B9a6905e3439cA09) |
 | RPC | `https://studio-dev.genlayer.com/api` |
 
 ## Contract interface
@@ -197,8 +197,8 @@ through `genlayer-js`. Current user-facing areas are:
 
 Wallet-specific reads and writes use the connected injected browser wallet.
 The market detail page also shows source evidence and pool composition. Its live
-performance chart uses the contract-provided Binance symbols and public 1-minute
-market data; it is informational only and is not connected to settlement.
+performance chart uses public Binance 1-minute market data with a separate
+chart-only symbol map; it is informational only and is not connected to settlement.
 
 ## Run locally
 
@@ -239,4 +239,4 @@ forge/
 - Forge intelligent contract deployed on GenLayer StudioNext.
 - Frontend pages and contract-backed reads and writes are implemented.
 - Wallet actions use the deployed contract through an injected wallet.
-- Live performance chart data is informational only; settlement uses the contract's independent Binance, Gate, and Bitget evidence.
+- Live performance chart data is informational only; settlement uses the contract's independent Hyperliquid, Gate, and Bitget evidence.

@@ -29,7 +29,7 @@ const STEPS = [
     body: "Minimum stake is 1 GEN and cumulative stake is capped at 50 GEN per wallet per market. One commodity per wallet per market — you can top up the same side before betting closes, but you cannot switch sides. Betting closes the moment the performance hour begins.",
   },
   {
-    title: "Binance, Gate and Bitget independently rank the commodities",
+    title: "Hyperliquid, Gate and Bitget independently rank the commodities",
     body: "Each exchange computes its own exact 1h open/close return for each commodity and ranks the three on its own. Prices and returns are never averaged across exchanges.",
   },
   {
@@ -76,9 +76,9 @@ function HowItWorks() {
         <div className="mt-6 flex flex-col items-center gap-4">
           <div className="grid w-full grid-cols-3 gap-3">
             {[
-              { name: "Binance", res: "GOLD", status: "VALID" },
-              { name: "Bitget", res: "GOLD", status: "VALID" },
+              { name: "Hyperliquid", res: "GOLD", status: "VALID" },
               { name: "Gate", res: "No vote", status: "TIE" },
+              { name: "Bitget", res: "GOLD", status: "VALID" },
             ].map((s) => (
               <div
                 key={s.name}

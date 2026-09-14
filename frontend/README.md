@@ -23,10 +23,10 @@ Rules the UI must reflect exactly:
 - Maximum cumulative stake 50 GEN per wallet per market.
 - One commodity per wallet per market; same-side top-ups allowed before betting closes; switching sides is not.
 - 0% protocol fee.
-- Settlement uses Binance, Bitget and Gate.
+- Settlement uses Hyperliquid, Gate and Bitget.
 - Each source independently ranks the three commodities using its own exact 1h open/close return. Never average prices or returns across exchanges.
 - 2-of-3 matching VALID source winners settle the market.
-- TIE or UNAVAILABLE source = no vote.
+- TIE, UNAVAILABLE, or INVALID source = no vote.
 - 30-minute retry window after the market ends.
 - If no 2-of-3 by deadline: INCONCLUSIVE and users self-claim original-stake refunds.
 - If the consensus-winning commodity has zero GEN backing while the total market pool is nonzero: INCONCLUSIVE/refund.
@@ -92,7 +92,7 @@ Main left card: Market view.
 Tabs: Live Performance / Pool Composition.
 Live Performance uses a clean 3-line Recharts chart showing relative return since market open and label “INFORMATIONAL ONLY”. METALS series: Gold/Silver/Copper. ENERGY: WTI/Brent/Natural Gas. For settled mock show “Contract winner: GOLD” style badge.
 Pool Composition tab shows the three GEN pools and shares.
-Below chart say: “Live performance is informational only. Settlement uses exact native 1h candles independently from Binance, Bitget and Gate.”
+Below chart say: “Live performance is informational only. Settlement uses exact native 1h candles independently from Hyperliquid, Gate and Bitget.”
 
 Sticky right panel variants:
 OPEN: heading “Place a position”, three commodity choices, current GEN pool/share, amount input, quick 1 / 5 / 10 / Max, note min 1 / max cumulative 50, one asset per wallet, same-side top-ups only, ember CTA. Mock interaction can update local state or show toast.
@@ -102,7 +102,7 @@ INCONCLUSIVE: show refundable stake + “Claim refund”.
 
 Below chart build:
 1. Timeline (UTC): Betting closes, Performance starts, Performance ends, Settlement ready, Retry deadline.
-2. Settlement card: Binance, Bitget, Gate rows with VALID/TIE/UNAVAILABLE and source winner; bottom summary “At least 2 of 3 valid sources” + contract winner/consensus. Add simple expandable evidence showing symbol/open/close/return for each source.
+2. Settlement card: Hyperliquid, Gate, Bitget rows with VALID/TIE/UNAVAILABLE and source winner; bottom summary “At least 2 of 3 valid sources” + contract winner/consensus. Add simple expandable evidence showing symbol/open/close/return for each source.
 3. Rules card with Forge rules above.
 
 PORTFOLIO PAGE
@@ -140,7 +140,7 @@ Keep it clean and educational, not marketing fluff.
 Explain in six numbered sections:
 1. Choose METALS or ENERGY and an exact 1-hour market.
 2. Pick one commodity and stake 1–50 GEN.
-3. Binance, Gate and Bitget independently rank the three commodities using their own exact 1h candle returns.
+3. Hyperliquid, Gate and Bitget independently rank the three commodities using their own exact 1h candle returns.
 4. Two matching valid source winners out of three settle the market.
 5. Winning side shares the whole pool pari-mutually, 0% protocol fee.
 6. If consensus fails by retry deadline, users self-claim original stakes.
