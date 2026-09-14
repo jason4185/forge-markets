@@ -1,12 +1,15 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TransactionHashVariant } from "genlayer-js/types";
-import { useAccount } from "wagmi";
+import { createPublicClient, http, type Address } from "viem";
 import { contractAdapter } from "./contractAdapter";
-import { MAX_PAGE_SIZE } from "./constants";
+import { FORGE_RPC_URL, forgeChain, MAX_PAGE_SIZE } from "./constants";
 import {
+  getInjectedAccounts,
+  getInjectedChainId,
   getActiveInjectedProvider,
   logNetworkSwitchClick,
+  requestInjectedAccounts,
   switchToStudioNext,
 } from "./walletConfig";
 import { queryRetryDelay, shouldRetryRead } from "./retry";
@@ -24,8 +27,185 @@ export function useNow(intervalMs = 15_000) {
   return now;
 }
 
+type ForgeWalletSnapshot = {
+  address: string | undefined;
+  chainId: number | undefined;
+  isConnected: boolean;
+  hasProvider: boolean;
+};
+
+type ForgeWalletValue = ForgeWalletSnapshot & {
+  connect: () => Promise<string>;
+  disconnect: () => void;
+  refresh: () => Promise<void>;
+};
+
+const ForgeWalletContext = React.createContext<ForgeWalletValue | undefined>(undefined);
+
+function walletAddress(value: unknown): string | undefined {
+  if (!Array.isArray(value) || typeof value[0] !== "string" || value[0].length === 0)
+    return undefined;
+  return value[0];
+}
+
+function walletChainId(value: unknown): number {
+  if (typeof value !== "string" && typeof value !== "number")
+    throw new Error("Wallet returned an invalid chain ID.");
+  const chainId =
+    typeof value === "string" ? Number.parseInt(value, /^0x/i.test(value) ? 16 : 10) : value;
+  if (!Number.isSafeInteger(chainId) || chainId < 0)
+    throw new Error("Wallet returned an invalid chain ID.");
+  return chainId;
+}
+
+export function useForgeWallet() {
+  const value = React.useContext(ForgeWalletContext);
+  if (!value) throw new Error("Forge wallet provider is unavailable.");
+  return value;
+}
+
+export function ForgeWalletProvider({ children }: { children: React.ReactNode }) {
+  const [wallet, setWallet] = React.useState<ForgeWalletSnapshot>(() => ({
+    address: undefined,
+    chainId: undefined,
+    isConnected: false,
+    hasProvider: false,
+  }));
+  const manualDisconnect = React.useRef(false);
+  const walletSyncVersion = React.useRef(0);
+
+  const syncFromProvider = React.useCallback(
+    async (provider: Awaited<ReturnType<typeof getActiveInjectedProvider>>) => {
+      if (!provider || manualDisconnect.current) return;
+      const requestVersion = walletSyncVersion.current;
+      const [accounts, chainId] = await Promise.all([
+        getInjectedAccounts(provider),
+        getInjectedChainId(provider),
+      ]);
+      if (manualDisconnect.current || requestVersion !== walletSyncVersion.current) return;
+      const address = walletAddress(accounts);
+      setWallet((current) => ({
+        ...current,
+        address,
+        chainId,
+        isConnected: Boolean(address),
+        hasProvider: true,
+      }));
+    },
+    [],
+  );
+
+  const refresh = React.useCallback(async () => {
+    walletSyncVersion.current += 1;
+    const provider = await getActiveInjectedProvider();
+    if (!provider) {
+      if (!manualDisconnect.current)
+        setWallet((current) => ({
+          ...current,
+          address: undefined,
+          chainId: undefined,
+          isConnected: false,
+          hasProvider: false,
+        }));
+      return;
+    }
+    await syncFromProvider(provider);
+  }, [syncFromProvider]);
+
+  const connect = React.useCallback(async () => {
+    manualDisconnect.current = false;
+    walletSyncVersion.current += 1;
+    const provider = await getActiveInjectedProvider({ diagnostic: true });
+    if (!provider) throw new Error("NO_INJECTED_PROVIDER");
+    const accounts = await requestInjectedAccounts(provider);
+    const address = walletAddress(accounts);
+    if (!address) throw new Error("The wallet did not return an account.");
+    const chainId = await getInjectedChainId(provider);
+    setWallet((current) => ({
+      ...current,
+      address,
+      chainId,
+      isConnected: true,
+      hasProvider: true,
+    }));
+    return address;
+  }, []);
+
+  const disconnect = React.useCallback(() => {
+    manualDisconnect.current = true;
+    walletSyncVersion.current += 1;
+    setWallet((current) => ({
+      ...current,
+      address: undefined,
+      chainId: undefined,
+      isConnected: false,
+    }));
+  }, []);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let provider: Awaited<ReturnType<typeof getActiveInjectedProvider>>;
+    const onAccountsChanged = (accounts: unknown) => {
+      manualDisconnect.current = false;
+      walletSyncVersion.current += 1;
+      const address = walletAddress(accounts);
+      setWallet((current) => ({
+        ...current,
+        address,
+        isConnected: Boolean(address),
+        hasProvider: true,
+      }));
+    };
+    const onChainChanged = (chainId: unknown) => {
+      manualDisconnect.current = false;
+      walletSyncVersion.current += 1;
+      try {
+        setWallet((current) => ({
+          ...current,
+          chainId: walletChainId(chainId),
+          hasProvider: true,
+        }));
+      } catch {
+        // Ignore malformed intermediate wallet events; the next provider read wins.
+      }
+    };
+    const onDisconnect = () => {
+      manualDisconnect.current = false;
+      walletSyncVersion.current += 1;
+      setWallet((current) => ({
+        ...current,
+        address: undefined,
+        chainId: undefined,
+        isConnected: false,
+        hasProvider: true,
+      }));
+    };
+    const setup = async () => {
+      provider = await getActiveInjectedProvider();
+      if (disposed) return;
+      provider?.on?.("accountsChanged", onAccountsChanged);
+      provider?.on?.("chainChanged", onChainChanged);
+      provider?.on?.("disconnect", onDisconnect);
+      await syncFromProvider(provider);
+    };
+    void setup().catch(() => undefined);
+    return () => {
+      disposed = true;
+      provider?.removeListener?.("accountsChanged", onAccountsChanged);
+      provider?.removeListener?.("chainChanged", onChainChanged);
+      provider?.removeListener?.("disconnect", onDisconnect);
+    };
+  }, [syncFromProvider]);
+
+  const value = React.useMemo<ForgeWalletValue>(
+    () => ({ ...wallet, connect, disconnect, refresh }),
+    [wallet, connect, disconnect, refresh],
+  );
+  return React.createElement(ForgeWalletContext.Provider, { value }, children);
+}
+
 export function useForgeWalletAddress() {
-  const { address, chainId } = useAccount();
+  const { address, chainId } = useForgeWallet();
   const queryClient = useQueryClient();
   const previous = React.useRef<string | undefined>(undefined);
   const previousChain = React.useRef<number | undefined>(undefined);
@@ -45,37 +225,9 @@ export function useForgeWalletAddress() {
   return address;
 }
 
-export function useForgeNetworkSync() {
-  const queryClient = useQueryClient();
-  const { address, isConnected } = useAccount();
-  React.useEffect(() => {
-    let disposed = false;
-    let provider: Awaited<ReturnType<typeof getActiveInjectedProvider>>;
-    const onChainChanged = (chainId: unknown) => {
-      if (import.meta.env.DEV) console.debug("[FORGE CHAIN CHANGED]", { chainId });
-      clearWalletQueries(queryClient, true);
-      void queryClient.invalidateQueries({ queryKey: ["balance"] });
-    };
-    void getActiveInjectedProvider().then((currentProvider) => {
-      if (disposed || typeof currentProvider?.on !== "function") return;
-      provider = currentProvider;
-      void currentProvider
-        .request({ method: "eth_chainId" })
-        .then((chainId) => {
-          if (import.meta.env.DEV) console.debug("[FORGE WALLET CHAIN]", { chainId });
-        })
-        .catch(() => undefined);
-      currentProvider.on("chainChanged", onChainChanged);
-    });
-    return () => {
-      disposed = true;
-      provider?.removeListener?.("chainChanged", onChainChanged);
-    };
-  }, [address, isConnected, queryClient]);
-}
-
 export function useForgeNetworkSwitch() {
   const queryClient = useQueryClient();
+  const { refresh } = useForgeWallet();
   const pending = React.useRef(false);
   const [isPending, setIsPending] = React.useState(false);
   const switchNetwork = React.useCallback(
@@ -86,6 +238,7 @@ export function useForgeNetworkSwitch() {
       setIsPending(true);
       try {
         await switchToStudioNext(source);
+        await refresh();
         await Promise.allSettled([
           ...walletQueryKeys.map((key) => queryClient.invalidateQueries({ queryKey: key })),
           queryClient.invalidateQueries({ queryKey: ["balance"] }),
@@ -96,7 +249,7 @@ export function useForgeNetworkSwitch() {
         setIsPending(false);
       }
     },
-    [queryClient],
+    [queryClient, refresh],
   );
   return { switchNetwork, isPending };
 }
@@ -197,6 +350,21 @@ export function useForgeOpenMarkets(nowMs: number, offset = 0, limit = MAX_PAGE_
     queryKey: ["forge", "open-markets", offset, limit],
     queryFn: () => contractAdapter.getOpenMarkets(Date.now(), offset, limit),
     enabled: nowMs > 0,
+    staleTime: PUBLIC_READ_STALE_TIME_MS,
+    ...queryOptions,
+  });
+}
+
+const forgePublicClient = createPublicClient({
+  chain: forgeChain,
+  transport: http(FORGE_RPC_URL),
+});
+
+export function useForgeBalance(address?: string) {
+  return useQuery({
+    queryKey: ["balance", walletQueryAddress(address)],
+    queryFn: () => forgePublicClient.getBalance({ address: address as Address }),
+    enabled: Boolean(address),
     staleTime: PUBLIC_READ_STALE_TIME_MS,
     ...queryOptions,
   });

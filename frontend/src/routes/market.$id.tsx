@@ -11,7 +11,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useAccount, useConnect } from "wagmi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,7 +24,6 @@ import {
   useClaimActionState,
 } from "@/lib/forge/claimActionState";
 import { reconcileClaimFinalization } from "@/lib/forge/claimLifecycle";
-import { forgeInjectedConnector } from "@/lib/forge/walletConfig";
 import { mapForgeError, type ForgeErrorContext } from "@/lib/forge/errors";
 import {
   FORGE_CHAIN_ID,
@@ -49,6 +47,7 @@ import {
   useForgeBinancePerformance,
   useForgeMarket,
   useForgeNetworkSwitch,
+  useForgeWallet,
   useForgePosition,
   useForgeSourceEvidence,
   useForgeWalletAddress,
@@ -585,8 +584,7 @@ function ActionPanel({
   bettingState: import("@/lib/forge/types").BettingState | undefined;
   positionUnavailable?: boolean;
 }) {
-  const { address, chainId, isConnected } = useAccount();
-  const { connect } = useConnect();
+  const { address, chainId, isConnected, connect } = useForgeWallet();
   const { switchNetwork, isPending: switching } = useForgeNetworkSwitch();
   const tx = useTransactionDialog();
   const refresh = useRefreshForge();
@@ -814,7 +812,11 @@ function ActionPanel({
             : "Transaction accepted",
     );
   };
-  const connectWallet = () => connect({ connector: forgeInjectedConnector });
+  const connectWallet = () =>
+    void connect().catch((error) => {
+      const mapped = mapForgeError(error, "WALLET_CONNECT");
+      toast.error(mapped.title, { description: mapped.message });
+    });
   const networkNotice = wrongNetwork ? (
     <div className="mt-4 rounded-xl border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
       <p className="font-medium">Wrong network</p>

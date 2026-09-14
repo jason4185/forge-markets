@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { useAccount } from "wagmi";
 import { TransactionHashVariant } from "genlayer-js/types";
 import { Wallet } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +27,7 @@ import {
   useForgeMyMarketCount,
   useForgeMyPositions,
   useForgeNetworkSwitch,
+  useForgeWallet,
   useForgeWalletAddress,
   useNow,
   useRefreshForge,
@@ -55,7 +55,7 @@ export const Route = createFileRoute("/portfolio")({
 
 function PortfolioPage() {
   const address = useForgeWalletAddress();
-  const { chainId, isConnected } = useAccount();
+  const { chainId, isConnected } = useForgeWallet();
   const { switchNetwork, isPending: switching } = useForgeNetworkSwitch();
   const now = useNow();
   const count = useForgeMyMarketCount(address);

@@ -1,11 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useAccount, useConnect } from "wagmi";
 import { TransactionHashVariant } from "genlayer-js/types";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { TransactionDialog, useTransactionDialog } from "@/components/forge/TransactionDialog";
-import { forgeInjectedConnector } from "@/lib/forge/walletConfig";
 import { logForgeWriteDebug, mapForgeError } from "@/lib/forge/errors";
 import { FORGE_CHAIN_ID, CATEGORY_ASSETS, type Category } from "@/lib/forge/constants";
 import { formatAsset, formatUtcDate, formatUtcTime } from "@/lib/forge/format";
@@ -15,6 +13,7 @@ import {
   useForgeCategories,
   useForgeCategoryAssets,
   useForgeNetworkSwitch,
+  useForgeWallet,
   useRefreshForge,
   useNow,
 } from "@/lib/forge/useForge";
@@ -44,8 +43,7 @@ function utcDate() {
 function CreatePage() {
   const navigate = useNavigate();
   const now = useNow();
-  const { address, chainId } = useAccount();
-  const { connect } = useConnect();
+  const { address, chainId, connect } = useForgeWallet();
   const { switchNetwork, isPending: switching } = useForgeNetworkSwitch();
   const categories = useForgeCategories();
   const [category, setCategory] = useState<Category>("METALS");
@@ -66,7 +64,11 @@ function CreatePage() {
   );
   const selected = hour === null ? null : (windows.find((item) => item.h === hour) ?? null);
   const shortTime = (value: Date) => `${String(value.getUTCHours()).padStart(2, "0")}:00 UTC`;
-  const connectWallet = () => connect({ connector: forgeInjectedConnector });
+  const connectWallet = () =>
+    void connect().catch((error) => {
+      const mapped = mapForgeError(error, "WALLET_CONNECT");
+      toast.error(mapped.title, { description: mapped.message });
+    });
   const requestNetworkSwitch = async () => {
     try {
       return await switchNetwork("create-market");

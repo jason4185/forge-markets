@@ -1,30 +1,21 @@
-import { createConfig, http, injected } from "wagmi";
 import {
-  forgeChain,
   FORGE_CHAIN_ID,
   FORGE_CHAIN_ID_HEX,
   FORGE_NATIVE_CURRENCY,
   FORGE_NETWORK_NAME,
   FORGE_RPC_URL,
 } from "./constants";
-import { logForgeWriteDebug, logForgeWriteOriginalError } from "./errors";
-
-export const forgeInjectedConnector = injected({ shimDisconnect: false });
-export const wagmiReconnectOnMount = true;
-
-export const wagmiConfig = createConfig({
-  chains: [forgeChain],
-  connectors: [forgeInjectedConnector],
-  transports: {
-    [forgeChain.id]: http(FORGE_RPC_URL),
-  },
-  multiInjectedProviderDiscovery: false,
-  ssr: false,
-});
+import { logForgeWriteDebug } from "./errors";
 
 type ProviderError = { code?: unknown; message?: unknown };
 
 type ForgeInjectedProvider = NonNullable<Window["ethereum"]>;
+
+type ProviderCandidate = ForgeInjectedProvider & {
+  isRabby?: boolean;
+  isMetaMask?: boolean;
+  providers?: readonly ForgeInjectedProvider[];
+};
 
 function isInjectedProvider(value: unknown): value is ForgeInjectedProvider {
   return Boolean(
@@ -33,6 +24,17 @@ function isInjectedProvider(value: unknown): value is ForgeInjectedProvider {
     "request" in value &&
     typeof (value as { request?: unknown }).request === "function",
   );
+}
+
+function injectedProvider(): ForgeInjectedProvider | undefined {
+  if (typeof window === "undefined") return undefined;
+  const candidate = window.ethereum as ProviderCandidate | undefined;
+  if (!candidate) return undefined;
+  if (Array.isArray(candidate.providers)) {
+    const providers = candidate.providers.filter(isInjectedProvider);
+    return providers.find((provider) => (provider as ProviderCandidate).isRabby) ?? providers[0];
+  }
+  return isInjectedProvider(candidate) ? candidate : undefined;
 }
 
 function devNetworkLog(message: string, details?: Record<string, unknown>) {
@@ -80,84 +82,39 @@ function parseProviderChainId(value: unknown): number {
 export async function getActiveInjectedProvider(
   options: { diagnostic?: boolean } = {},
 ): Promise<ForgeInjectedProvider | undefined> {
-  if (typeof window === "undefined") return undefined;
-
-  // Resolve through the same configured wagmi connector used for the connected
-  // account. This preserves the selected injected provider when a browser exposes
-  // more than one instead of assuming a different provider at switch time.
-  const activeUid = wagmiConfig.state.current;
-  const connection = activeUid ? wagmiConfig.state.connections.get(activeUid) : undefined;
-  const connectedConnector = connection?.connector;
-  const persistedConnector = activeUid
-    ? wagmiConfig.state.connections.get(activeUid)?.connector
-    : undefined;
-  // Wagmi persists connector metadata, not the live connector object. After a
-  // refresh that metadata has no methods, so never call getProvider() on it.
-  const activeConnector =
-    (connectedConnector && typeof connectedConnector.getProvider === "function"
-      ? connectedConnector
-      : undefined) ??
-    wagmiConfig.connectors.find(
-      (connector) =>
-        connector.uid === activeUid ||
-        connector.uid === persistedConnector?.uid ||
-        connector.id === persistedConnector?.id,
-    ) ??
-    wagmiConfig.connectors[0];
-  if (options.diagnostic)
-    logForgeWriteDebug("active connector", {
-      activeUid: activeUid ?? "none",
-      connectorId: activeConnector?.id ?? "none",
-      connectorName: activeConnector?.name ?? "none",
-      connectorType: activeConnector?.type ?? "none",
-      providerMethod:
-        typeof activeConnector?.getProvider === "function" ? "getProvider" : "missing",
-    });
-  if (!activeConnector || typeof activeConnector.getProvider !== "function") {
-    if (options.diagnostic)
-      logForgeWriteDebug("provider acquisition result", {
-        providerPresent: false,
-        hasRequest: false,
-        providerType: "none",
-      });
-    return undefined;
-  }
-  let connectorProvider: unknown;
-  try {
-    connectorProvider = await activeConnector.getProvider();
-  } catch (error) {
-    if (options.diagnostic) {
-      logForgeWriteOriginalError("provider acquisition", error, {
-        connectorId: activeConnector.id,
-        connectorName: activeConnector.name,
-      });
-      logForgeWriteDebug("provider acquisition result", {
-        providerPresent: false,
-        hasRequest: false,
-        providerType: "error",
-      });
-      throw error;
-    }
-    connectorProvider = undefined;
-  }
+  const activeProvider = injectedProvider();
   if (options.diagnostic) {
+    const providerRecord = activeProvider as ProviderCandidate | undefined;
     logForgeWriteDebug("provider acquisition result", {
-      providerPresent: Boolean(connectorProvider),
-      hasRequest: Boolean(
-        connectorProvider &&
-        typeof connectorProvider === "object" &&
-        "request" in connectorProvider &&
-        typeof (connectorProvider as { request?: unknown }).request === "function",
-      ),
+      providerPresent: Boolean(activeProvider),
+      hasRequest: Boolean(activeProvider && typeof activeProvider.request === "function"),
       providerType:
-        connectorProvider && typeof connectorProvider === "object"
-          ? ((connectorProvider as { constructor?: { name?: unknown } }).constructor?.name ??
-            "object")
-          : typeof connectorProvider,
+        activeProvider && typeof activeProvider === "object"
+          ? ((activeProvider as { constructor?: { name?: unknown } }).constructor?.name ?? "object")
+          : typeof activeProvider,
+      providerName: providerRecord?.isRabby
+        ? "Rabby"
+        : providerRecord?.isMetaMask
+          ? "MetaMask"
+          : "Injected",
     });
   }
-  if (isInjectedProvider(connectorProvider)) return connectorProvider;
-  return undefined;
+  return activeProvider;
+}
+
+export async function requestInjectedAccounts(provider = injectedProvider()): Promise<unknown> {
+  if (!provider) throw new Error("NO_INJECTED_PROVIDER");
+  return provider.request({ method: "eth_requestAccounts" });
+}
+
+export async function getInjectedAccounts(provider = injectedProvider()): Promise<unknown> {
+  if (!provider) return [];
+  return provider.request({ method: "eth_accounts" });
+}
+
+export async function getInjectedChainId(provider = injectedProvider()): Promise<number> {
+  if (!provider) throw new Error("NO_INJECTED_PROVIDER");
+  return providerChainId(provider);
 }
 
 export const getCurrentConnectedInjectedProvider = getActiveInjectedProvider;

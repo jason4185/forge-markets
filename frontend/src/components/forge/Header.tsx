@@ -12,8 +12,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useAccount, useBalance, useConnect, useDisconnect } from "wagmi";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,13 +25,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ForgeWordmark } from "./Logo";
 import { FORGE_CHAIN_ID } from "@/lib/forge/constants";
-import { forgeInjectedConnector, getActiveInjectedProvider } from "@/lib/forge/walletConfig";
 import { logForgeError, mapForgeError } from "@/lib/forge/errors";
 import { formatAsset, formatGen, relativeActivityTime, truncateAddress } from "@/lib/forge/format";
 import { useForgeNotifications } from "@/lib/forge/notifications";
 import {
   useForgeNetworkSwitch,
-  useForgeNetworkSync,
+  useForgeBalance,
+  useForgeWallet,
   useForgeWalletAddress,
 } from "@/lib/forge/useForge";
 
@@ -44,36 +43,20 @@ const NAV = [
 ] as const;
 
 export function Header() {
-  const { address: accountAddress, chainId, isConnected } = useAccount();
+  const { address: accountAddress, chainId, isConnected, connect, disconnect } = useForgeWallet();
   const address = useForgeWalletAddress();
-  const { data: balance } = useBalance({ address: accountAddress, chainId: FORGE_CHAIN_ID });
-  const { connect, error: connectError } = useConnect();
-  const { disconnect } = useDisconnect();
+  const { data: balance } = useForgeBalance(accountAddress);
   const { switchNetwork, isPending: switching } = useForgeNetworkSwitch();
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const notifications = useForgeNotifications(address);
   const wrongNetwork = isConnected && chainId !== FORGE_CHAIN_ID;
-  useForgeNetworkSync();
-
-  useEffect(() => {
-    if (connectError) {
-      logForgeError(connectError, "WALLET_CONNECT");
-      const mapped = mapForgeError(connectError, "WALLET_CONNECT");
+  const connectWallet = () =>
+    void connect().catch((error) => {
+      logForgeError(error, "WALLET_CONNECT");
+      const mapped = mapForgeError(error, "WALLET_CONNECT");
       toast.error(mapped.title, { description: mapped.message });
-    }
-  }, [connectError]);
-
-  const connectWallet = () => {
-    void getActiveInjectedProvider().then((provider) => {
-      if (!provider) {
-        const mapped = mapForgeError(new Error("NO_INJECTED_PROVIDER"), "WALLET_CONNECT");
-        toast.error(mapped.title, { description: mapped.message });
-        return;
-      }
-      connect({ connector: forgeInjectedConnector });
     });
-  };
   const requestNetworkSwitch = () =>
     void switchNetwork("header").catch((error) => {
       const mapped = mapForgeError(error, "NETWORK_SWITCH");
@@ -209,7 +192,7 @@ export function Header() {
                   <span className="num">{truncateAddress(address)}</span>
                   <span className="h-3 w-px bg-ember/30" />
                   <span className="num">
-                    {balance ? `${formatGen(balance.value)} GEN` : "— GEN"}
+                    {balance !== undefined ? `${formatGen(balance)} GEN` : "— GEN"}
                   </span>
                 </button>
               </DropdownMenuTrigger>
@@ -236,7 +219,7 @@ export function Header() {
                     </button>
                   </div>
                   <p className="num mt-3 text-sm text-foreground">
-                    {balance ? `${formatGen(balance.value)} GEN` : "Balance unavailable"}
+                    {balance !== undefined ? `${formatGen(balance)} GEN` : "Balance unavailable"}
                   </p>
                   <div className="mt-3 flex items-center justify-between gap-3 text-xs">
                     <span className="text-muted-foreground">Network</span>
