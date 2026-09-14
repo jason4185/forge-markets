@@ -175,7 +175,9 @@ function debugProvider(provider: EIP1193Provider, functionName: string): EIP1193
 }
 
 type ForgeWriteClient = ReturnType<typeof createClient>;
+type ForgeJsonRpcAccount = { address: Address; type: "json-rpc" };
 type ForgeWriteCall = {
+  account: ForgeJsonRpcAccount;
   address: Address;
   functionName: string;
   args: CalldataEncodable[];
@@ -183,22 +185,20 @@ type ForgeWriteCall = {
 };
 type ForgeFeeEstimate = Awaited<ReturnType<ForgeWriteClient["estimateTransactionFees"]>>;
 
-function isTransientFeeError(error: unknown): boolean {
-  const details = debugError(error);
-  const code = details["code"];
-  const text = Object.values(details)
-    .filter((value) => typeof value === "string" || typeof value === "number")
-    .join(" ")
-    .toLowerCase();
-  return (
-    code === 429 ||
-    code === 502 ||
-    code === 503 ||
-    code === 504 ||
-    /\b429\b|\b502\b|\b503\b|\b504\b|rate limit|too many requests|bad gateway|failed to fetch|network|timeout|temporar/.test(
-      text,
-    )
-  );
+const WRITE_METHODS_REQUIRING_MESSAGE_DISCOVERY = new Set(["claim", "claim_refund"]);
+
+export function usesConcreteWriteSimulation(functionName: string): boolean {
+  return WRITE_METHODS_REQUIRING_MESSAGE_DISCOVERY.has(functionName);
+}
+
+export async function estimateForgeWriteFees(
+  client: ForgeWriteClient,
+  functionName: string,
+  call: ForgeWriteCall,
+): Promise<ForgeFeeEstimate> {
+  if (usesConcreteWriteSimulation(functionName))
+    return client.estimateTransactionFeesForWrite(call);
+  return client.estimateTransactionFees();
 }
 
 function exposedReceiptField(receipt: RawMap, names: string[]): string | number {
@@ -871,6 +871,7 @@ async function prepareForgeWrite(
   if (chainId !== FORGE_CHAIN_ID)
     throw new Error(`Switch your wallet to ${FORGE_NETWORK_NAME} before sending a transaction.`);
   const call: ForgeWriteCall = {
+    account: { address: account as Address, type: "json-rpc" },
     address: FORGE_CONTRACT_ADDRESS,
     functionName,
     args: args as CalldataEncodable[],
@@ -886,7 +887,7 @@ async function prepareForgeWrite(
   });
   const client = createClient({
     chain: forgeChain as never,
-    account: account as Address,
+    account: call.account,
     provider: debugProvider(injectedProvider as EIP1193Provider, functionName),
   });
   // The client is already constructed with the official studioDevnet chain,
@@ -914,46 +915,32 @@ async function prepareForgeWrite(
       account,
     },
   );
-  let feeEstimate: ForgeFeeEstimate | undefined;
-  let lastFeeError: unknown;
-  const maxFeeEstimateAttempts = 3;
-  for (let attempt = 0; attempt < maxFeeEstimateAttempts; attempt += 1) {
-    try {
-      // A settlement can execute gl.vm.run_nondet and fetch three external
-      // sources. Studio's concrete sim_estimateTransactionFees path is not a
-      // reliable representation of that write: the same call was finalized
-      // successfully by Studio while this simulation returned execution failed.
-      // Use the SDK's live policy estimate for this permissionless write. Other
-      // methods retain concrete simulation because their caller-sensitive
-      // validation is useful and currently supported by Studio.
-      feeEstimate =
-        functionName === "settle_market"
-          ? await client.estimateTransactionFees()
-          : await client.estimateTransactionFeesForWrite(call);
-      break;
-    } catch (error) {
-      lastFeeError = error;
-      const retrying = isTransientFeeError(error) && attempt + 1 < maxFeeEstimateAttempts;
-      debugForgeTransaction(
-        functionName === "settle_market"
-          ? "[FORGE SETTLE FEE ERROR]"
-          : "[FORGE WRITE 4 FEE_ESTIMATE_FAILED]",
-        {
-          method: functionName,
-          account,
-          contract: FORGE_CONTRACT_ADDRESS,
-          attempt: attempt + 1,
-          retrying,
-          error: debugError(error),
-        },
-      );
-      if (!retrying) break;
-      await new Promise<void>((resolve) =>
-        globalThis.setTimeout(resolve, attempt === 0 ? 3_000 : 6_000),
-      );
-    }
+  let feeEstimate: ForgeFeeEstimate;
+  try {
+    // Policy estimation is one bounded Studio RPC path for ordinary writes.
+    // Claim and refund retain one concrete simulation because the contract
+    // emits a value-transfer message whose allocation must be discovered with
+    // the real connected caller. A failed preparation is surfaced immediately
+    // so a user can retry intentionally instead of multiplying RPC load.
+    feeEstimate = await estimateForgeWriteFees(client, functionName, call);
+  } catch (error) {
+    debugForgeTransaction(
+      functionName === "settle_market"
+        ? "[FORGE SETTLE FEE ERROR]"
+        : "[FORGE WRITE 4 FEE_ESTIMATE_FAILED]",
+      {
+        method: functionName,
+        account,
+        contract: FORGE_CONTRACT_ADDRESS,
+        attempts: 1,
+        estimator: usesConcreteWriteSimulation(functionName)
+          ? "estimateTransactionFeesForWrite"
+          : "estimateTransactionFees",
+        error: debugError(error),
+      },
+    );
+    throw new Error(`FEE_ESTIMATE_FAILED: ${errorMessage(error)}`);
   }
-  if (!feeEstimate) throw new Error(`FEE_ESTIMATE_FAILED: ${errorMessage(lastFeeError)}`);
   debugForgeTransaction(
     functionName === "settle_market" ? "[FORGE SETTLE FEE OK]" : "[FORGE WRITE 4 FEE_ESTIMATE_OK]",
     {
@@ -963,10 +950,9 @@ async function prepareForgeWrite(
       feeValue: feeEstimate.feeValue.toString(),
       feeValueGen: formatGen(feeEstimate.feeValue, 18),
       messageAllocationCount: feeEstimate.messageAllocations?.length ?? 0,
-      estimator:
-        functionName === "settle_market"
-          ? "estimateTransactionFees (Studio fee policy)"
-          : "estimateTransactionFeesForWrite",
+      estimator: usesConcreteWriteSimulation(functionName)
+        ? "estimateTransactionFeesForWrite"
+        : "estimateTransactionFees",
     },
   );
   return { client, call, feeEstimate };

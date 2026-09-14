@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { waitForAcceptedExecution } from "../src/lib/forge/contractAdapter";
+import {
+  estimateForgeWriteFees,
+  usesConcreteWriteSimulation,
+  waitForAcceptedExecution,
+} from "../src/lib/forge/contractAdapter";
 import { mapForgeError } from "../src/lib/forge/errors";
 import { reconcileAcceptedWrite } from "../src/lib/forge/retry";
 import { transactionStageCopy } from "../src/lib/forge/transactionState";
@@ -121,5 +125,49 @@ describe("Forge transaction lifecycle", () => {
 
     expect(copy.title).toBe("Settlement attempt completed");
     expect(copy.message).toContain("No 2-of-3 source consensus yet");
+  });
+
+  test("uses one policy fee request for ordinary writes", async () => {
+    let policyCalls = 0;
+    let simulationCalls = 0;
+    const estimate = { feeValue: 1n, distribution: {} } as never;
+    const client = {
+      estimateTransactionFees: async () => {
+        policyCalls += 1;
+        return estimate;
+      },
+      estimateTransactionFeesForWrite: async () => {
+        simulationCalls += 1;
+        return estimate;
+      },
+    } as never;
+
+    await estimateForgeWriteFees(client, "settle_market", {} as never);
+
+    expect(policyCalls).toBe(1);
+    expect(simulationCalls).toBe(0);
+    expect(usesConcreteWriteSimulation("settle_market")).toBe(false);
+  });
+
+  test("keeps one concrete fee request for transfer-message writes", async () => {
+    let policyCalls = 0;
+    let simulationCalls = 0;
+    const estimate = { feeValue: 1n, distribution: {} } as never;
+    const client = {
+      estimateTransactionFees: async () => {
+        policyCalls += 1;
+        return estimate;
+      },
+      estimateTransactionFeesForWrite: async () => {
+        simulationCalls += 1;
+        return estimate;
+      },
+    } as never;
+
+    await estimateForgeWriteFees(client, "claim_refund", {} as never);
+
+    expect(policyCalls).toBe(0);
+    expect(simulationCalls).toBe(1);
+    expect(usesConcreteWriteSimulation("claim_refund")).toBe(true);
   });
 });

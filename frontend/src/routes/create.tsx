@@ -105,7 +105,6 @@ function CreatePage() {
       return;
     }
     tx.done(result.hash, "Market created");
-    await refresh("create");
     const created = await reconcileAcceptedWrite(
       result,
       () =>
@@ -118,6 +117,7 @@ function CreatePage() {
       (market) => market !== null,
     );
     if (!created) {
+      await refresh("create");
       return;
     }
     await refresh("create");

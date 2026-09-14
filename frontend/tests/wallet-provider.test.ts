@@ -11,6 +11,35 @@ afterEach(() => {
 });
 
 describe("Forge injected provider resolution", () => {
+  test("uses the live connector provider when the connection is active", async () => {
+    const provider = {
+      request: async ({ method }: { method: string }) => (method === "eth_chainId" ? "0xf22d" : []),
+    };
+    globalThis.window = {} as never;
+    const configuredConnector = wagmiConfig.connectors[0]!;
+    const liveConnector = {
+      ...configuredConnector,
+      getProvider: async () => provider,
+    };
+    wagmiConfig.setState({
+      ...initialState,
+      current: "live-connector",
+      connections: new Map([
+        [
+          "live-connector",
+          {
+            accounts: ["0x0000000000000000000000000000000000000001"],
+            chainId: 61997,
+            connector: liveConnector,
+          },
+        ],
+      ]),
+      status: "connected",
+    } as never);
+
+    expect(await getActiveInjectedProvider()).toBe(provider);
+  });
+
   test("resolves the live configured connector after Wagmi rehydration", async () => {
     const provider = {
       request: async ({ method }: { method: string }) => (method === "eth_chainId" ? "0xf22d" : []),

@@ -137,7 +137,6 @@ function PortfolioPage() {
       action: type,
       refresh,
     });
-    await refresh(type === "claim" ? "claim" : "refund", row.position.marketId);
     const updatedPosition = await reconcileAcceptedWrite(
       result,
       () =>
@@ -148,7 +147,10 @@ function PortfolioPage() {
         ),
       (position) => (type === "claim" ? !position.claimAvailable : !position.refundAvailable),
     );
-    if (!updatedPosition) return;
+    if (!updatedPosition) {
+      await refresh(type === "claim" ? "claim" : "refund", row.position.marketId);
+      return;
+    }
     await refresh(type === "claim" ? "claim" : "refund", row.position.marketId);
     toast.success(`${type === "claim" ? "Claim" : "Refund"} accepted`);
   };

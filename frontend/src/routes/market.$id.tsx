@@ -754,7 +754,6 @@ function ActionPanel({
         refresh,
       });
     }
-    await refresh(kind === "bet" ? "bet" : kind, market.id);
     if (kind === "bet") {
       const updatedPosition = await reconcileAcceptedWrite(
         result,
@@ -762,7 +761,10 @@ function ActionPanel({
           contractAdapter.getMyPosition(market.id, address, TransactionHashVariant.LATEST_NONFINAL),
         (next) => next.totalStake >= (position?.totalStake ?? 0n) + betValue,
       );
-      if (!updatedPosition) return;
+      if (!updatedPosition) {
+        await refresh("bet", market.id);
+        return;
+      }
     } else if (kind === "settle") {
       const settledMarket = await reconcileAcceptedWrite(
         result,
@@ -785,7 +787,10 @@ function ActionPanel({
         });
       settlementPending = settledMarket?.contractState === "SETTLEMENT_PENDING";
       if (settlementPending) tx.done(result.hash, "Settlement attempt completed");
-      if (!settledMarket) return;
+      if (!settledMarket) {
+        await refresh("settle", market.id);
+        return;
+      }
     } else {
       const updatedPosition = await reconcileAcceptedWrite(
         result,
@@ -793,7 +798,10 @@ function ActionPanel({
           contractAdapter.getMyPosition(market.id, address, TransactionHashVariant.LATEST_NONFINAL),
         (next) => (kind === "claim" ? !next.claimAvailable : !next.refundAvailable),
       );
-      if (!updatedPosition) return;
+      if (!updatedPosition) {
+        await refresh(kind, market.id);
+        return;
+      }
     }
     await refresh(kind === "bet" ? "bet" : kind, market.id);
     toast.success(

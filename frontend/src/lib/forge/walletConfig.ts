@@ -83,18 +83,24 @@ export async function getActiveInjectedProvider(): Promise<ForgeInjectedProvider
   // account. This preserves the selected injected provider when a browser exposes
   // more than one instead of assuming a different provider at switch time.
   const activeUid = wagmiConfig.state.current;
+  const connection = activeUid ? wagmiConfig.state.connections.get(activeUid) : undefined;
+  const connectedConnector = connection?.connector;
   const persistedConnector = activeUid
     ? wagmiConfig.state.connections.get(activeUid)?.connector
     : undefined;
   // Wagmi persists connector metadata, not the live connector object. After a
   // refresh that metadata has no methods, so never call getProvider() on it.
   const activeConnector =
+    (connectedConnector && typeof connectedConnector.getProvider === "function"
+      ? connectedConnector
+      : undefined) ??
     wagmiConfig.connectors.find(
       (connector) =>
         connector.uid === activeUid ||
         connector.uid === persistedConnector?.uid ||
         connector.id === persistedConnector?.id,
-    ) ?? wagmiConfig.connectors[0];
+    ) ??
+    wagmiConfig.connectors[0];
   if (!activeConnector || typeof activeConnector.getProvider !== "function") return undefined;
   let connectorProvider: unknown;
   try {
