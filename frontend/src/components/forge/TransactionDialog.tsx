@@ -182,16 +182,9 @@ export function TransactionDialog({
           </div>
         )}
         {state.stage === "ERROR" && (
-          <>
-            <p className="rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
-              {copy.message}
-            </p>
-            {state.technicalDetail && !state.hash && (
-              <p className="rounded-md border border-border bg-panel-2 px-3 py-2 text-center text-[11px] text-muted-foreground">
-                Technical detail: {state.technicalDetail}
-              </p>
-            )}
-          </>
+          <p className="rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
+            {copy.message}
+          </p>
         )}
         {footer ?? (
           <button

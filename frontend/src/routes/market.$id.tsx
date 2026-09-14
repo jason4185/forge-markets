@@ -596,7 +596,9 @@ function ActionPanel({
   const settlementActionAvailable =
     market.settlementAvailable &&
     market.contractState !== "SETTLED" &&
-    market.contractState !== "INCONCLUSIVE";
+    market.contractState !== "INCONCLUSIVE" &&
+    (market.contractState !== "SETTLEMENT_PENDING" ||
+      BigInt(Math.floor(Date.now() / 1000)) >= market.settlementDeadlineSeconds);
   const settlementDeadlinePassed =
     settlementActionAvailable &&
     BigInt(Math.floor(Date.now() / 1000)) >= market.settlementDeadlineSeconds;
@@ -997,16 +999,17 @@ function ActionPanel({
             </span>
             . Settlement is permissionless.
           </p>
-          {market.settlementAvailable && (
-            <Button
-              variant="outline"
-              className="mt-4 w-full rounded-xl"
-              disabled={tx.locked}
-              onClick={() => runWrite("settle")}
-            >
-              {tx.locked ? "Transaction pending…" : "Settle market"}
-            </Button>
-          )}
+          {market.settlementAvailable &&
+            BigInt(Math.floor(Date.now() / 1000)) < market.settlementDeadlineSeconds && (
+              <Button
+                variant="outline"
+                className="mt-4 w-full rounded-xl"
+                disabled={tx.locked}
+                onClick={() => runWrite("settle")}
+              >
+                {tx.locked ? "Transaction pending…" : "Retry settlement"}
+              </Button>
+            )}
         </aside>
         <TransactionDialog state={tx.state} busy={tx.busy} onClose={tx.close} />
       </>

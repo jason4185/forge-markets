@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { createClient } from "genlayer-js";
 import {
   contractAdapter,
@@ -10,6 +11,7 @@ import { mapForgeError } from "../src/lib/forge/errors";
 import { reconcileAcceptedWrite } from "../src/lib/forge/retry";
 import { transactionStageCopy } from "../src/lib/forge/transactionState";
 import { forgeChain } from "../src/lib/forge/constants";
+import { MARKET_DETAIL_QUERY_OPTIONS } from "../src/lib/forge/useForge";
 
 function receipt(statusName: string, txExecutionResultName = "FINISHED_WITH_RETURN") {
   return { statusName, txExecutionResultName } as never;
@@ -304,5 +306,38 @@ describe("Forge transaction lifecycle", () => {
       if (previousWindow === undefined) Reflect.deleteProperty(globalThis, "window");
       else globalThis.window = previousWindow;
     }
+  });
+
+  test("refetches cached market detail on mount and replaces stale state", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryKey = ["forge", "market", "1", "LATEST_FINAL"] as const;
+    queryClient.setQueryData(queryKey, { contractState: "OPEN", winner: null });
+    let reads = 0;
+    const observer = new QueryObserver(queryClient, {
+      queryKey,
+      queryFn: async () => {
+        reads += 1;
+        return { contractState: "SETTLED", winner: "SILVER" };
+      },
+      ...MARKET_DETAIL_QUERY_OPTIONS,
+    });
+    const states: unknown[] = [];
+    const settled = new Promise<void>((resolve) => {
+      const unsubscribe = observer.subscribe((result) => {
+        states.push(result.data?.contractState);
+        if (result.data?.contractState === "SETTLED") {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+
+    await settled;
+    expect(reads).toBe(1);
+    expect(states).toContain("OPEN");
+    expect(states).toContain("SETTLED");
+    expect(observer.options.refetchOnMount).toBe("always");
+    expect(observer.options.refetchOnWindowFocus).toBe(true);
+    queryClient.clear();
   });
 });

@@ -302,6 +302,13 @@ const queryOptions = {
 const walletActionabilityVariant = TransactionHashVariant.LATEST_NONFINAL;
 const PUBLIC_READ_STALE_TIME_MS = 15_000;
 const STATIC_READ_STALE_TIME_MS = 300_000;
+export const MARKET_DETAIL_QUERY_OPTIONS = {
+  // A detail page must verify the current contract state when it opens. This
+  // also lets window focus discover settlement performed in another tab.
+  staleTime: 0,
+  refetchOnMount: "always" as const,
+  refetchOnWindowFocus: true,
+} as const;
 
 export function useForgeConfig() {
   return useQuery({
@@ -412,9 +419,8 @@ export function useForgeMarket(
     queryKey: ["forge", "market", marketId, transactionHashVariant],
     queryFn: () => contractAdapter.getMarket(marketId, Date.now(), transactionHashVariant),
     enabled: Boolean(marketId) && nowMs > 0,
-    staleTime: PUBLIC_READ_STALE_TIME_MS,
-    placeholderData: (previousData) => previousData,
     ...queryOptions,
+    ...MARKET_DETAIL_QUERY_OPTIONS,
   });
 }
 export function useForgePosition(marketId: string, address?: string) {

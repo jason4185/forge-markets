@@ -30,6 +30,7 @@ export interface ForgeUserError {
 }
 
 export function logForgeWriteDebug(stage: string, details: Record<string, unknown> = {}) {
+  if (!import.meta.env.DEV) return;
   console.debug(`[FORGE_WRITE_DEBUG] ${stage}`, details);
 }
 
@@ -65,6 +66,7 @@ export function logForgeWriteOriginalError(
   error: unknown,
   details: Record<string, unknown> = {},
 ) {
+  if (!import.meta.env.DEV) return;
   console.error("[FORGE_WRITE_DEBUG] ORIGINAL_ERROR", {
     ...details,
     stage,
